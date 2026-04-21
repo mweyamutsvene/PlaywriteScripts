@@ -4,7 +4,7 @@ A VS Code workspace that doubles as:
 
 1. A **document repository** for personal notes, digests, and scraped data.
 2. A set of **skills** (Node/Playwright scripts) that produce data files.
-3. A **Copilot assistant** (`.github/chatmodes/assistant.chatmode.md`) that runs
+3. A **Copilot assistant** (`.github/agents/assistant.agent.md`) that runs
    routine tasks and writes summaries on demand.
 
 ## Quick start
@@ -26,16 +26,70 @@ All subsequent runs reuse the saved profile in `.auth/outlook/`.
 ```
 scripts/                    Node scripts
   scrape-outlook.mjs        Outlook Web inbox scraper
+  scrape-teams.mjs          Teams chats + channels scraper (enterprise)
   lib/outlook-dom.mjs       DOM helpers injected into the page
+  lib/teams-dom.mjs
 data/<source>/              Raw outputs (gitignored)
-notes/                      Assistant-generated summaries
+notes/                      Assistant-generated summaries (gitignored)
 .github/
   copilot-instructions.md   Workspace-wide rules for Copilot
   agents/assistant.agent.md Custom agent persona
   prompts/morning-email.prompt.md
-  skills/outlook-scrape/SKILL.md  Skill: inputs, outputs, procedure
+  prompts/teams-catchup.prompt.md
+  skills/outlook-scrape/SKILL.md
+  skills/teams-scrape/SKILL.md
 .auth/                      Persistent browser profiles (gitignored)
 ```
+
+## Running the scrapers directly
+
+```pwsh
+# Outlook inbox, last 3 days → data/outlook/inbox-<stamp>.{json,md}
+npm run scrape:outlook -- --days 3
+
+# Teams: inspect the DOM first to confirm selectors match your tenant
+npm run scrape:teams -- --inspect --debug
+
+# Teams: one-off by name (resolves chats and channels)
+npm run scrape:teams -- --names "Standup,Platform Eng General" --days 1 --debug
+
+# Teams: from a targets file (see teams-targets.example.json)
+copy teams-targets.example.json teams-targets.json   # edit to taste (gitignored)
+npm run scrape:teams -- --targets teams-targets.json --days 3
+```
+
+### Teams script flags
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--targets <file>` | `teams-targets.json` | JSON array of chat/channel names |
+| `--names "A,B"` | — | Comma-separated names (alternative to `--targets`) |
+| `--url <url>` | `https://teams.microsoft.com/v2/` | Override Teams URL |
+| `--days <n>` | `3` | Look back N days |
+| `--since <iso>` | — | Harvest messages newer than this ISO date |
+| `--max <n>` | `200` | Max messages per target |
+| `--headful` | `true` | Show the browser window |
+| `--inspect` | — | Print DOM diagnostics and exit |
+| `--debug` | — | Verbose `[debug]` traces through search/pick/harvest |
+
+`TEAMS_DEBUG=1` also enables debug mode.
+
+## Setting this up on another machine
+
+```pwsh
+git clone https://github.com/mweyamutsvene/PlaywriteScripts.git
+cd PlaywriteScripts
+npm install                                  # also runs `playwright install chromium`
+
+# First run opens Chromium — sign in to Outlook and/or Teams, then leave the window.
+# Login survives between runs via the .auth/ persistent profiles (gitignored).
+npm run scrape:outlook -- --days 1
+npm run scrape:teams -- --inspect --debug
+```
+
+Persistent profiles are per-machine and never committed. The `--debug` output on
+a fresh machine is the fastest way to confirm selectors match the tenant before
+running against a full target list.
 
 ## Adding a new skill
 
