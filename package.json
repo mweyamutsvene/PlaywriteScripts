@@ -1,0 +1,15 @@
+{
+  "name": "playwrite-scripts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright scripts + VS Code Copilot agent files, prompts, and skills.",
+  "scripts": {
+    "scrape:outlook": "node scripts/scrape-outlook.mjs",
+    "scrape:teams": "node scripts/scrape-teams.mjs",
+    "postinstall": "playwright install chromium"
+  },
+  "devDependencies": {
+    "playwright": "^1.47.0"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "targets": [
+    "Team Standup",
+    { "team": "Platform Eng", "channel": "General" },
+    { "name": "Nick Baudin", "label": "Nick (1:1)" }
+  ]
+}

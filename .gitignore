@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Playwright
+.auth/
+playwright-report/
+test-results/
+.cache/
+
+# Auto-generated data & notes
+data/
+notes/
+
+# Local secrets / user config
+teams-targets.json
+.env
+.env.*
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
