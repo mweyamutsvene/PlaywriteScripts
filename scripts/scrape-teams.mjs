@@ -114,10 +114,43 @@ function normalizeTarget(t) {
 
   const isFirstRun = !existsSync(path.join(AUTH_DIR, 'Default'));
   dbg('launching persistent chromium context', { headless: !HEADFUL, isFirstRun });
-  const context = await chromium.launchPersistentContext(AUTH_DIR, {
+  dbg('auth dir exists =', existsSync(AUTH_DIR), ', "Default" profile exists =', existsSync(path.join(AUTH_DIR, 'Default')));
+
+  // Enterprise Teams (and Entra conditional access) commonly invalidates sessions
+  // when it detects automation. These flags make Playwright's Chromium look like
+  // a normal Chrome session: no "Chrome is being controlled by automated test
+  // software" banner, no navigator.webdriver flag, realistic UA.
+  const launchOpts = {
     headless: !HEADFUL,
     viewport: { width: 1400, height: 1000 },
-  });
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--disable-features=Translate,IsolateOrigins,site-per-process',
+    ],
+    ignoreDefaultArgs: ['--enable-automation'],
+    userAgent:
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+      '(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+  };
+  // If the user has real Chrome installed, prefer it — profiles created by real
+  // Chrome survive Entra device-binding checks better than bundled Chromium.
+  if (args.channel) launchOpts.channel = String(args.channel); // e.g. --channel chrome
+
+  const context = await chromium.launchPersistentContext(AUTH_DIR, launchOpts);
+
+  // Persist the session on Ctrl+C — otherwise the profile can be left in a
+  // half-written state and next run needs to re-auth.
+  let closing = false;
+  const gracefulClose = async (sig) => {
+    if (closing) return;
+    closing = true;
+    console.log(`\n→ Caught ${sig}, closing browser to save session...`);
+    try { await context.close(); } catch {}
+    process.exit(130);
+  };
+  process.on('SIGINT', () => gracefulClose('SIGINT'));
+  process.on('SIGTERM', () => gracefulClose('SIGTERM'));
+
   const page = context.pages()[0] ?? await context.newPage();
 
   page.on('console', msg => {

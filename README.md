@@ -71,8 +71,29 @@ npm run scrape:teams -- --targets teams-targets.json --days 3
 | `--headful` | `true` | Show the browser window |
 | `--inspect` | — | Print DOM diagnostics and exit |
 | `--debug` | — | Verbose `[debug]` traces through search/pick/harvest |
+| `--channel <name>` | bundled chromium | Use installed Chrome/Edge (e.g. `--channel chrome`) — survives Entra device checks better |
 
 `TEAMS_DEBUG=1` also enables debug mode.
+
+### If Teams keeps asking you to sign in every run
+
+Enterprise tenants with conditional access often invalidate Playwright's bundled
+Chromium session. Try:
+
+```pwsh
+# Use your real Chrome install (profile lives in .auth/teams, not your main Chrome profile)
+npm run scrape:teams -- --channel chrome --inspect --debug
+```
+
+The script also:
+
+- sets a realistic Chrome user-agent,
+- disables the `--enable-automation` flag and the `navigator.webdriver` bit,
+- closes the browser cleanly on Ctrl+C so cookies are flushed to disk.
+
+If SSO still re-prompts every run, the tenant is enforcing session binding to
+a managed/compliant device — no scraper workaround exists; run it on a device
+that satisfies the Intune/Entra compliance policy.
 
 ## Setting this up on another machine
 
