@@ -36,8 +36,11 @@ const SINCE = args.since ? new Date(args.since) : null;
 const MAX_MESSAGES = args.max ? Number(args.max) : 200;
 const HEADFUL = args.headful ?? true;
 const INSPECT = !!args.inspect;
+const DEBUG = !!args.debug || !!process.env.TEAMS_DEBUG;
 const PANE_SETTLE_MS = 900;
 const MAX_SCROLL_ROUNDS = 40;
+
+function dbg(...a) { if (DEBUG) console.log('[debug]', ...a); }
 
 function parseArgs(argv) {
   const out = {};
@@ -95,18 +98,40 @@ function normalizeTarget(t) {
   await mkdir(AUTH_DIR, { recursive: true });
   await mkdir(DATA_DIR, { recursive: true });
 
+  console.log('=== scrape-teams ===');
+  console.log(`  node        ${process.version}`);
+  console.log(`  cwd         ${process.cwd()}`);
+  console.log(`  root        ${ROOT}`);
+  console.log(`  auth dir    ${AUTH_DIR}`);
+  console.log(`  data dir    ${DATA_DIR}`);
+  console.log(`  url         ${TEAMS_URL}`);
+  console.log(`  days/since  ${SINCE ? SINCE.toISOString() : DAYS + ' day(s)'}`);
+  console.log(`  max msgs    ${MAX_MESSAGES}`);
+  console.log(`  headful     ${HEADFUL}`);
+  console.log(`  inspect     ${INSPECT}`);
+  console.log(`  debug       ${DEBUG}`);
+  console.log('====================');
+
   const isFirstRun = !existsSync(path.join(AUTH_DIR, 'Default'));
+  dbg('launching persistent chromium context', { headless: !HEADFUL, isFirstRun });
   const context = await chromium.launchPersistentContext(AUTH_DIR, {
     headless: !HEADFUL,
     viewport: { width: 1400, height: 1000 },
   });
   const page = context.pages()[0] ?? await context.newPage();
 
-  console.log(`â†’ Navigating to ${TEAMS_URL}`);
+  page.on('console', msg => {
+    if (DEBUG && ['error', 'warning'].includes(msg.type())) {
+      console.log(`[page.${msg.type()}]`, msg.text().slice(0, 240));
+    }
+  });
+
+  console.log(`→ Navigating to ${TEAMS_URL}`);
   await page.goto(TEAMS_URL, { waitUntil: 'domcontentloaded' });
+  dbg('post-goto url =', page.url());
 
   if (isFirstRun) {
-    console.log('â†’ First run: sign in to Teams in the opened window. Waiting up to 5 minutes...');
+    console.log('→ First run: sign in to Teams in the opened window. Waiting up to 5 minutes...');
   }
 
   await page.waitForSelector(
@@ -114,7 +139,8 @@ function normalizeTarget(t) {
     { timeout: 5 * 60_000 }
   );
   await page.waitForTimeout(1500);
-  console.log('âœ“ Teams shell detected.');
+  console.log('✓ Teams shell detected.');
+  dbg('shell url =', page.url(), ', title =', await page.title());
 
   if (INSPECT) {
     const info = await page.evaluate(inspectPane);
@@ -181,23 +207,66 @@ function normalizeTarget(t) {
   process.exit(1);
 });
 
+async function openSearchBox(page) {
+  // Try clicking the top search box first (most reliable in Teams v2).
+  const result = await page.evaluate(() => {
+    const sels = [
+      '[data-tid="searchBoxInput"]',
+      '[data-tid="search-box"]',
+      '[data-tid="topBarSearchInput"]',
+      '[placeholder*="Search" i]',
+      'input[aria-label*="Search" i]',
+      '[role="search"] input',
+      '[role="search"] [contenteditable="true"]',
+    ];
+    for (const sel of sels) {
+      const els = document.querySelectorAll(sel);
+      for (const el of els) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 40 && rect.height > 10) {
+          el.focus();
+          el.click?.();
+          return { clicked: true, via: sel, tag: el.tagName, rect: { w: rect.width, h: rect.height } };
+        }
+      }
+    }
+    return { clicked: false, counts: Object.fromEntries(sels.map(s => [s, document.querySelectorAll(s).length])) };
+  });
+  if (result.clicked) {
+    dbg(`openSearchBox: clicked via ${result.via} (${result.tag}, ${result.rect.w}x${result.rect.h})`);
+    return true;
+  }
+  dbg('openSearchBox: no direct match, counts =', JSON.stringify(result.counts));
+
+  // Keyboard fallbacks.
+  dbg('openSearchBox: trying Ctrl+E');
+  await page.keyboard.press('Control+E').catch(() => {});
+  await page.waitForTimeout(400);
+  const afterCtrlE = await page.evaluate(() => ({
+    active: document.activeElement?.tagName,
+    activeRole: document.activeElement?.getAttribute('role'),
+    activePlaceholder: document.activeElement?.getAttribute('placeholder'),
+  }));
+  dbg('openSearchBox: after Ctrl+E, active =', JSON.stringify(afterCtrlE));
+  await page.keyboard.press('Control+Alt+E').catch(() => {});
+  await page.waitForTimeout(400);
+  return true;
+}
+
 async function gotoTarget(page, name) {
   const beforeHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
+  dbg(`gotoTarget("${name}"): before header = ${beforeHeader.header ?? '(none)'}`);
 
-  await page.keyboard.press('Control+Alt+G').catch(() => {});
-  await page.waitForTimeout(400);
+  await openSearchBox(page);
+  await page.waitForTimeout(500);
 
-  let opened = await pickFromSuggestions(page, name);
+  const opened = await pickFromSuggestions(page, name);
   if (!opened) {
-    await page.keyboard.press('Escape').catch(() => {});
-    await page.waitForTimeout(200);
-    await page.keyboard.press('Control+E').catch(() => {});
-    await page.waitForTimeout(500);
-    opened = await pickFromSuggestions(page, name);
+    dbg('gotoTarget: pickFromSuggestions returned false');
+    return false;
   }
-  if (!opened) return false;
 
-  return await page.waitForFunction(
+  const success = await page.waitForFunction(
     (prev) => {
       const hEl = document.querySelector(
         '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [role="main"] h1, [role="main"] h2'
@@ -209,46 +278,73 @@ async function gotoTarget(page, name) {
     beforeHeader.header,
     { timeout: 15_000 }
   ).then(() => true).catch(() => false);
+
+  const afterHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
+  dbg(`gotoTarget: success=${success}, after header = ${afterHeader.header ?? '(none)'}`);
+  return success;
 }
 
 async function pickFromSuggestions(page, name) {
-  const boxes = await page.$$(
-    'input[type="text"], input[type="search"], [role="combobox"], [role="searchbox"], [contenteditable="true"]'
-  );
-  let input = null;
-  for (const b of boxes) {
-    if (await b.evaluate(el => el === document.activeElement).catch(() => false)) { input = b; break; }
+  // Use whatever is focused (the search box we just opened).
+  const activeSel = 'input[type="text"]:focus, input[type="search"]:focus, [role="combobox"]:focus, [role="searchbox"]:focus, [contenteditable="true"]:focus';
+  let input = await page.$(activeSel);
+  let via = 'focused';
+  if (!input) {
+    input = await page.$('[data-tid="searchBoxInput"], [data-tid="topBarSearchInput"], [placeholder*="Search" i], [role="search"] input, [role="search"] [contenteditable="true"]');
+    via = 'fallback-selector';
   }
-  if (!input) input = boxes[0];
-  if (!input) return false;
+  if (!input) {
+    dbg('pickFromSuggestions: no input element found');
+    return false;
+  }
+  dbg(`pickFromSuggestions: using input via ${via}`);
 
   await input.click({ delay: 30 }).catch(() => {});
   await page.keyboard.press('Control+A').catch(() => {});
   await page.keyboard.press('Delete').catch(() => {});
-  await page.keyboard.type(name, { delay: 20 });
-  await page.waitForTimeout(900);
+  await page.keyboard.type(name, { delay: 30 });
+  await page.waitForTimeout(1200);
 
-  const clicked = await page.evaluate((needle) => {
+  const result = await page.evaluate((needle) => {
     const lower = String(needle).toLowerCase();
-    const candidates = document.querySelectorAll(
-      '[role="option"], [role="listitem"], [data-tid^="suggestion"], [data-tid^="search-result"]'
-    );
+    const tokens = lower.split(/\s+/).filter(Boolean);
+    const sels = [
+      '[role="option"]',
+      '[role="listitem"]',
+      '[data-tid^="suggestion"]',
+      '[data-tid^="search-result"]',
+      '[data-tid^="searchResult"]',
+      '[data-tid*="chat-list-item"]',
+      '[data-tid*="team-channel"]',
+    ];
+    const candidates = document.querySelectorAll(sels.join(','));
+    const counts = Object.fromEntries(sels.map(s => [s, document.querySelectorAll(s).length]));
+    const samples = [...candidates].slice(0, 5).map(el => (el.textContent || '').trim().slice(0, 80));
+    // Prefer exact/contiguous matches.
+    let best = null, bestScore = -1, bestText = null;
     for (const el of candidates) {
       const t = (el.textContent || '').toLowerCase();
-      if (t.includes(lower) || lower.split(/\s+/).every(tok => t.includes(tok))) {
-        el.click();
-        return true;
-      }
+      if (!t) continue;
+      let score = 0;
+      if (t.includes(lower)) score = 100;
+      else if (tokens.every(tok => t.includes(tok))) score = 50;
+      else continue;
+      score -= Math.min(20, Math.floor(t.length / 200));
+      if (score > bestScore) { best = el; bestScore = score; bestText = t.slice(0, 80); }
     }
-    const first = document.querySelector('[role="option"]');
-    if (first) { first.click(); return true; }
-    return false;
+    if (best) { best.click(); return { clicked: true, score: bestScore, text: bestText, total: candidates.length, counts, samples }; }
+    return { clicked: false, total: candidates.length, counts, samples };
   }, name);
 
-  if (!clicked) {
+  dbg(`pickFromSuggestions: ${result.total} candidates, counts=${JSON.stringify(result.counts)}`);
+  if (result.samples?.length) dbg('pickFromSuggestions: samples =', result.samples);
+  if (result.clicked) {
+    dbg(`pickFromSuggestions: clicked score=${result.score} text="${result.text}"`);
+  } else {
+    dbg('pickFromSuggestions: no match — pressing Enter');
     await page.keyboard.press('Enter').catch(() => {});
   }
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(800);
   return true;
 }
 
@@ -260,6 +356,7 @@ async function harvestOpenPane(page, cutoff) {
 
   for (let round = 0; round < MAX_SCROLL_ROUNDS && !reachedOlder && seen.size < MAX_MESSAGES && stagnant < 3; round++) {
     const snap = await page.evaluate(collectPaneMessages);
+    dbg(`harvest round ${round}: +${snap.msgs.length} raw msgs, hasContainer=${snap.hasContainer}, hasScroller=${snap.hasScroller}, scroll=${JSON.stringify(snap.scroll)}`);
     for (const m of snap.msgs) {
       const key = `${m.timeISO || ''}|${m.sender || ''}|${(m.text || '').slice(0, 80)}`;
       if (seen.has(key)) continue;
@@ -269,8 +366,8 @@ async function harvestOpenPane(page, cutoff) {
     if (reachedOlder || seen.size >= MAX_MESSAGES) break;
 
     const mv = await page.evaluate(scrollPaneUpBy, 1400);
-    if (!mv?.ok) break;
-    if (mv.atTop || mv.after === lastTop) stagnant++;
+    if (!mv?.ok) { dbg('harvest: no scrollable container, stopping'); break; }
+    if (mv.atTop || mv.after === lastTop) { stagnant++; dbg(`harvest: stagnant=${stagnant} (atTop=${mv.atTop}, top=${mv.after})`); }
     else { stagnant = 0; lastTop = mv.after; }
     await page.waitForTimeout(PANE_SETTLE_MS);
   }
@@ -279,6 +376,7 @@ async function harvestOpenPane(page, cutoff) {
   const messages = [...seen.values()]
     .filter(m => !m.timeISO || new Date(m.timeISO) >= cutoff)
     .sort((a, b) => new Date(a.timeISO || 0) - new Date(b.timeISO || 0));
+  dbg(`harvest done: ${seen.size} unique, ${messages.length} after cutoff filter, reachedOlder=${reachedOlder}`);
   return { header, messageCount: messages.length, messages };
 }
 
