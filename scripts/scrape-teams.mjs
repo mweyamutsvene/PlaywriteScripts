@@ -130,14 +130,29 @@ function normalizeTarget(t) {
   await page.goto(TEAMS_URL, { waitUntil: 'domcontentloaded' });
   dbg('post-goto url =', page.url());
 
-  if (isFirstRun) {
-    console.log('→ First run: sign in to Teams in the opened window. Waiting up to 5 minutes...');
-  }
+  console.log('→ Waiting for Teams shell (up to 5 minutes; sign in if prompted)...');
 
-  await page.waitForSelector(
-    '[data-tid="app-bar-wrapper"], [role="main"], [data-tid="chat-pane"]',
-    { timeout: 5 * 60_000 }
-  );
+  // Wait for a Teams-specific element — NOT [role="main"], which also matches
+  // the login page and causes us to plow ahead before sign-in finishes.
+  try {
+    await page.waitForFunction(() => {
+      if (/login\.microsoftonline\.com|login\.live\.com/i.test(location.hostname)) return false;
+      return !!document.querySelector(
+        '[data-tid="app-bar-wrapper"], [data-tid="chat-pane"], [data-tid="message-pane-list-surface"], [data-tid="searchBoxInput"], [data-tid="topBarSearchInput"]'
+      );
+    }, { timeout: 5 * 60_000, polling: 1000 });
+  } catch {
+    const url = page.url();
+    console.error('✗ Timed out waiting for Teams shell.');
+    console.error(`  Final URL: ${url}`);
+    if (/login\./i.test(url)) {
+      console.error('  Still on a Microsoft login page — sign in completed? Try again, and complete MFA if prompted.');
+    } else {
+      console.error('  Not on a known login page; tenant may require conditional access / device compliance.');
+    }
+    await context.close();
+    process.exit(3);
+  }
   await page.waitForTimeout(1500);
   console.log('✓ Teams shell detected.');
   dbg('shell url =', page.url(), ', title =', await page.title());
@@ -214,10 +229,16 @@ async function openSearchBox(page) {
       '[data-tid="searchBoxInput"]',
       '[data-tid="search-box"]',
       '[data-tid="topBarSearchInput"]',
+      '[data-tid="searchV2SearchBox"]',
+      '[data-tid*="search" i] input',
+      '[data-tid*="search" i] [contenteditable="true"]',
       '[placeholder*="Search" i]',
       'input[aria-label*="Search" i]',
+      '[aria-label*="Search" i][contenteditable="true"]',
       '[role="search"] input',
       '[role="search"] [contenteditable="true"]',
+      // Some tenants expose a Search button that opens the real input.
+      'button[aria-label*="Search" i]',
     ];
     for (const sel of sels) {
       const els = document.querySelectorAll(sel);
@@ -230,13 +251,30 @@ async function openSearchBox(page) {
         }
       }
     }
-    return { clicked: false, counts: Object.fromEntries(sels.map(s => [s, document.querySelectorAll(s).length])) };
+    // Diagnostic dump: list any visible element whose text/aria mentions "search".
+    const visible = [];
+    for (const el of document.querySelectorAll('input, button, [contenteditable="true"], [role="search"]')) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 40 || rect.height < 10) continue;
+      const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+      const ph = (el.getAttribute('placeholder') || '').toLowerCase();
+      const tid = el.getAttribute('data-tid') || '';
+      if (aria.includes('search') || ph.includes('search') || /search/i.test(tid)) {
+        visible.push({ tag: el.tagName, tid, aria, ph, w: Math.round(rect.width), h: Math.round(rect.height) });
+      }
+    }
+    return {
+      clicked: false,
+      counts: Object.fromEntries(sels.map(s => [s, document.querySelectorAll(s).length])),
+      visibleSearchLike: visible.slice(0, 8),
+    };
   });
   if (result.clicked) {
     dbg(`openSearchBox: clicked via ${result.via} (${result.tag}, ${result.rect.w}x${result.rect.h})`);
     return true;
   }
   dbg('openSearchBox: no direct match, counts =', JSON.stringify(result.counts));
+  dbg('openSearchBox: visible search-like elements =', JSON.stringify(result.visibleSearchLike));
 
   // Keyboard fallbacks.
   dbg('openSearchBox: trying Ctrl+E');
