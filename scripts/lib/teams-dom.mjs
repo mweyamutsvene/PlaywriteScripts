@@ -7,7 +7,7 @@
 
 export function readHeader() {
   const hEl = document.querySelector(
-    '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [role="banner"] h1, [role="main"] h1, [role="main"] h2'
+    '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channel-header"] h1, [data-tid="channel-header"] h2, [role="banner"] h1, [role="main"] h1, [role="main"] h2'
   );
   return { header: hEl?.textContent?.trim() || null, title: document.title };
 }
@@ -17,6 +17,9 @@ export function collectPaneMessages() {
     '.fui-Chat',
     '[class*="fui-Chat"]',
     '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list"]',
+    '[data-tid="channel-content"]',
+    '[data-tid="threadBodyList"]',
     '.ts-message-list-container',
     '[data-tid="chat-pane"]',
     '[role="main"] [data-is-scrollable="true"]',
@@ -28,6 +31,9 @@ export function collectPaneMessages() {
   ];
   const MESSAGE_SELECTORS = [
     '[data-tid="chat-pane-item"]',
+    '[data-tid="message-pane-item"]',
+    '[data-tid^="post-message-renderer"]',
+    '[data-tid^="reply-message-renderer"]',
     '[data-testid="message-wrapper"]',
     '[data-tid="chat-pane-message"]',
     '[class*="fui-unstable-ChatItem"]',
@@ -37,6 +43,7 @@ export function collectPaneMessages() {
     '[role="listitem"]',
   ];
   const TIMESTAMP_SELECTORS = [
+    '[data-tid^="timestamp-"]',
     '[class*="fui-ChatMessage__timestamp"]',
     '[class*="fui-ChatMyMessage__timestamp"]',
     '[class*="__timestamp"]',
@@ -49,6 +56,7 @@ export function collectPaneMessages() {
     '[datetime]',
   ];
   const SENDER_SELECTORS = [
+    '[data-tid^="author-"]',
     '[class*="fui-ChatMessage__author"]',
     '[class*="fui-ChatMyMessage__author"]',
     '[class*="__author"]',
@@ -62,6 +70,8 @@ export function collectPaneMessages() {
     '[class*="DisplayName"]',
   ];
   const MESSAGE_TEXT_SELECTORS = [
+    '[data-tid="message-body-content"]',
+    '[data-tid="message-body"]',
     '[class*="fui-ChatMessage__body"]',
     '[class*="fui-ChatMyMessage__body"]',
     '[class*="__body"]',
@@ -173,6 +183,9 @@ export function collectPaneMessages() {
   messageEls.forEach((el, idx) => {
     const item = el.closest('[data-tid="chat-pane-item"]')
       || el.closest('[data-tid="chat-pane-message"]')
+      || el.closest('[data-tid="message-pane-item"]')
+      || el.closest('[data-tid^="post-message-renderer"]')
+      || el.closest('[data-tid^="reply-message-renderer"]')
       || el;
 
     if (item.querySelector('[class*="fui-Divider"]')
@@ -189,7 +202,7 @@ export function collectPaneMessages() {
       const text = controlEl.textContent?.trim() || '';
       if (text) {
         msgs.push({
-          index: idx, isSystemMessage: true, sender: '[System]',
+          isSystemMessage: true, sender: '[System]',
           text: text.slice(0, 2000),
           timeISO: lastTime ? lastTime.toISOString() : null,
           timeLabel: lastTimeStr || 'Chat start',
@@ -242,7 +255,7 @@ export function collectPaneMessages() {
     if (!text) return;
 
     msgs.push({
-      index: idx, isSystemMessage: false,
+      isSystemMessage: false,
       sender: sender || lastSender,
       text: text.slice(0, 5000),
       timeISO: (parsedTime || lastTime)?.toISOString() || null,
@@ -268,6 +281,8 @@ export function collectPaneMessages() {
 export function scrollPaneUpBy(delta) {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="threadBodyList"]',
     '.ts-message-list-container', '[data-tid="chat-pane"]',
     '[role="main"] [data-is-scrollable="true"]', '.message-list',
     '[class*="message-list"]', '[class*="MessageList"]',
@@ -306,6 +321,7 @@ export function scrollPaneUpBy(delta) {
 export function scrollPaneToTop() {
   const sels = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
     '[data-tid="chat-pane"]', '[role="main"] [data-is-scrollable="true"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
   ];
@@ -322,13 +338,17 @@ export function scrollPaneToTop() {
 export function inspectPane() {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="threadBodyList"]',
     '.ts-message-list-container', '[data-tid="chat-pane"]',
     '[role="main"] [data-is-scrollable="true"]', '.message-list',
     '[class*="message-list"]', '[class*="MessageList"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
   ];
   const MESSAGE_SELECTORS = [
-    '[data-tid="chat-pane-item"]', '[data-testid="message-wrapper"]',
+    '[data-tid="chat-pane-item"]', '[data-tid="message-pane-item"]',
+    '[data-tid^="post-message-renderer"]', '[data-tid^="reply-message-renderer"]',
+    '[data-testid="message-wrapper"]',
     '[data-tid="chat-pane-message"]', '[class*="fui-unstable-ChatItem"]',
     '[data-tid="messageWrapper"]', '.message-body-container',
     '[class*="message-item"]', '[role="listitem"]',
@@ -354,3 +374,28 @@ export function inspectPane() {
   }
   return out;
 }
+
+// Channels lazy-render replies: each post shows up to ~3 recent replies behind
+// an "Open N replies from ..." button. This expands all such buttons in the
+// visible DOM so collectPaneMessages can see the reply bodies. Also expands
+// "See more" truncation buttons inside long message bodies.
+export function expandChannelReplies() {
+  const patterns = [
+    /^\s*(open|show|see|view)\s+\d+\s+(older\s+)?repl(y|ies)/i,
+    /^\s*\d+\s+(older\s+)?repl(y|ies)/i,
+    /hidden\s+repl(y|ies)/i,
+    /^\s*see\s+more\b/i,
+  ];
+  const nodes = document.querySelectorAll('button, [role="button"]');
+  let clicked = 0;
+  for (const btn of nodes) {
+    if (btn.getAttribute('aria-disabled') === 'true' || btn.disabled) continue;
+    const label = (btn.getAttribute('aria-label') || btn.textContent || '').trim();
+    if (!label) continue;
+    if (patterns.some((re) => re.test(label))) {
+      try { btn.click(); clicked++; } catch {}
+    }
+  }
+  return { clicked };
+}
+

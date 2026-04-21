@@ -22,6 +22,7 @@ import {
   collectPaneMessages,
   scrollPaneUpBy,
   inspectPane,
+  expandChannelReplies,
 } from './lib/teams-dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -426,6 +427,11 @@ async function harvestOpenPane(page, cutoff) {
   let lastTop = -1;
 
   for (let round = 0; round < MAX_SCROLL_ROUNDS && !reachedOlder && seen.size < MAX_MESSAGES && stagnant < 3; round++) {
+    const exp = await page.evaluate(expandChannelReplies).catch(() => ({ clicked: 0 }));
+    if (exp?.clicked) {
+      dbg(`harvest round ${round}: expanded ${exp.clicked} reply/see-more button(s)`);
+      await page.waitForTimeout(400);
+    }
     const snap = await page.evaluate(collectPaneMessages);
     dbg(`harvest round ${round}: +${snap.msgs.length} raw msgs, hasContainer=${snap.hasContainer}, hasScroller=${snap.hasScroller}, scroll=${JSON.stringify(snap.scroll)}`);
     for (const m of snap.msgs) {
