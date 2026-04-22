@@ -21,6 +21,7 @@ import {
   readHeader,
   collectPaneMessages,
   scrollPaneUpBy,
+  scrollPaneToBottom,
   inspectPane,
   expandChannelReplies,
   clickSidebarTarget,
@@ -501,6 +502,17 @@ async function harvestOpenPane(page, cutoff) {
   let reachedOlder = false;
   let stagnant = 0;
   let lastTop = -1;
+
+  // Teams opens chats/channels at the last-read position. Jump to the bottom
+  // first so unread messages below the last-read marker are captured, then
+  // harvest backwards through scroll-up rounds.
+  for (let i = 0; i < 5; i++) {
+    const res = await page.evaluate(scrollPaneToBottom).catch(() => null);
+    if (!res?.ok) break;
+    dbg(`harvest pre: scrollToBottom ${i}: before=${res.before}, after=${res.after}, atBottom=${res.atBottom}`);
+    if (res.atBottom && res.before === res.after) break;
+    await page.waitForTimeout(PANE_SETTLE_MS);
+  }
 
   for (let round = 0; round < MAX_SCROLL_ROUNDS && !reachedOlder && seen.size < MAX_MESSAGES && stagnant < 3; round++) {
     const exp = await page.evaluate(expandChannelReplies).catch(() => ({ clicked: 0 }));

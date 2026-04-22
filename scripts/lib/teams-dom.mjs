@@ -340,6 +340,32 @@ export function scrollPaneToTop() {
   return { ok: true };
 }
 
+// Scroll the message pane all the way to the bottom. Teams opens chats/channels
+// at the last-read position, so unread messages below it are missed unless we
+// jump to the newest first and then harvest backwards.
+export function scrollPaneToBottom() {
+  const sels = [
+    '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
+    '[data-tid="chat-pane"]', '[role="main"] [data-is-scrollable="true"]',
+    '[data-tid="messageListContainer"]', '[role="log"]',
+  ];
+  let el = null;
+  for (const sel of sels) {
+    const found = document.querySelector(sel);
+    if (found && found.scrollHeight > found.clientHeight + 10) { el = found; break; }
+  }
+  if (!el) return { ok: false };
+  const before = el.scrollTop;
+  el.scrollTop = el.scrollHeight;
+  return {
+    ok: true, before, after: el.scrollTop,
+    atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 2,
+    scrollHeight: el.scrollHeight,
+  };
+}
+
 export function inspectPane() {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
