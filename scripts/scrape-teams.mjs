@@ -364,16 +364,23 @@ async function gotoTarget(page, target) {
       ? `team="${sidebar.teamMatch}" channel="${sidebar.channelMatch}" (teamScore=${sidebar.teamScore}, chScore=${sidebar.channelScore})`
       : `"${sidebar.matchText}" (score=${sidebar.score})`;
     dbg(`gotoTarget: sidebar hit ${label}, expanded=${sidebar.expandedFolders}`);
+    const beforeUrl = page.url();
     const ok = await page.waitForFunction(
-      (prev) => {
+      ({ prev, prevUrl }) => {
+        // URL changed? Channels and chats both swap the URL on navigation.
+        if (location.href !== prevUrl) return true;
         const hEl = document.querySelector(
-          '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [role="main"] h1, [role="main"] h2'
+          '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channel-header"], [role="main"] h1, [role="main"] h2'
         );
         const h = hEl?.textContent?.trim() || null;
-        const hasMsgs = document.querySelectorAll('[data-tid="chat-pane-item"], [data-tid="chat-pane-message"], [data-tid="message-pane-item"], [data-tid^="post-message-renderer"]').length > 0;
-        return (h && h !== prev) || hasMsgs;
+        if (h && h !== prev) return true;
+        // Any message/post/reply renderer visible?
+        const hasMsgs = document.querySelectorAll(
+          '[data-tid="chat-pane-item"], [data-tid="chat-pane-message"], [data-tid="message-pane-item"], [data-tid^="post-message-renderer"], [data-tid^="reply-message-renderer"], [data-tid="message-pane-list-surface"], [data-tid="message-pane-list"], [data-tid="threadBodyList"], [data-tid="channel-content"]'
+        ).length > 0;
+        return hasMsgs;
       },
-      beforeHeader.header,
+      { prev: beforeHeader.header, prevUrl: beforeUrl },
       { timeout: 15_000 }
     ).then(() => true).catch(() => false);
     const afterHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
