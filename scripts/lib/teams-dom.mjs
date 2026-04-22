@@ -303,15 +303,38 @@ export function scrollPaneUpBy(delta) {
     return null;
   };
   const getScroller = () => {
+    const isScrollable = (node) => {
+      if (!node || node === document.body) return false;
+      const cs = window.getComputedStyle(node);
+      return (cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+        && node.scrollHeight > node.clientHeight + 10;
+    };
     const chat = getChatContainer();
     if (chat) {
-      if (chat.scrollHeight > chat.clientHeight + 10) return chat;
+      if (isScrollable(chat)) return chat;
       let p = chat.parentElement;
-      while (p) {
-        const cs = getComputedStyle(p);
-        if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && p.scrollHeight > p.clientHeight + 10) return p;
+      while (p && p !== document.documentElement) {
+        if (isScrollable(p)) return p;
         p = p.parentElement;
       }
+    }
+    // Anchor off a known post element for channels.
+    for (const anchor of document.querySelectorAll('[id^="post-message-renderer-"], [id^="message-body-"], [data-tid="message-pane-item"]')) {
+      let p = anchor.parentElement;
+      while (p && p !== document.documentElement) {
+        if (isScrollable(p)) return p;
+        p = p.parentElement;
+      }
+    }
+    // Last resort: biggest scrollable inside [role="main"].
+    const main = document.querySelector('[role="main"]');
+    if (main && isScrollable(main)) return main;
+    if (main) {
+      let best = null;
+      for (const node of main.querySelectorAll('*')) {
+        if (isScrollable(node) && (!best || node.scrollHeight > best.scrollHeight)) best = node;
+      }
+      if (best) return best;
     }
     return chat;
   };
@@ -344,19 +367,53 @@ export function scrollPaneToTop() {
 // at the last-read position, so unread messages below it are missed unless we
 // jump to the newest first and then harvest backwards.
 export function scrollPaneToBottom() {
-  const sels = [
+  const ANCHOR_SELS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="chat-pane"]', '[role="main"] [data-is-scrollable="true"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
+    // Posts anchor — walk up from a known post element to find scroller.
+    '[id^="post-message-renderer-"]', '[id^="message-body-"]',
+    '[data-tid="chat-pane-item"]', '[data-tid="message-pane-item"]',
   ];
+  const isScrollable = (el) => {
+    if (!el || el === document.body) return false;
+    const cs = window.getComputedStyle(el);
+    return (cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+      && el.scrollHeight > el.clientHeight + 10;
+  };
+  // 1) Try direct selection.
   let el = null;
-  for (const sel of sels) {
-    const found = document.querySelector(sel);
-    if (found && found.scrollHeight > found.clientHeight + 10) { el = found; break; }
+  for (const sel of ANCHOR_SELS) {
+    try {
+      const found = document.querySelector(sel);
+      if (!found) continue;
+      if (isScrollable(found)) { el = found; break; }
+      // Walk up to find scrollable ancestor.
+      let p = found.parentElement;
+      while (p && p !== document.documentElement) {
+        if (isScrollable(p)) { el = p; break; }
+        p = p.parentElement;
+      }
+      if (el) break;
+    } catch {}
   }
-  if (!el) return { ok: false };
+  // 2) Last resort: biggest scrollable element inside [role="main"].
+  if (!el) {
+    const main = document.querySelector('[role="main"]');
+    if (main && isScrollable(main)) { el = main; }
+    if (!el && main) {
+      let best = null;
+      for (const node of main.querySelectorAll('*')) {
+        if (isScrollable(node)) {
+          if (!best || node.scrollHeight > best.scrollHeight) best = node;
+        }
+      }
+      el = best;
+    }
+  }
+  if (!el) return { ok: false, reason: 'no-scroller' };
   const before = el.scrollTop;
   el.scrollTop = el.scrollHeight;
   return {
