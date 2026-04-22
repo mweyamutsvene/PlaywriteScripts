@@ -17,7 +17,9 @@ export function collectPaneMessages() {
     '.fui-Chat',
     '[class*="fui-Chat"]',
     '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list-viewport"]',
     '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
     '[data-tid="channel-pane-viewport"]',
     '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]',
@@ -37,11 +39,14 @@ export function collectPaneMessages() {
     '[data-tid="chat-pane-item"]',
     '[data-tid="message-pane-item"]',
     '[data-tid="channel-pane-message"]',
+    '[data-tid="chat-pane-message"]',
+    '[data-tid="channel-replies-pane-message"]',
+    '[data-testid="message-body-flex-wrapper"]',
     '[id^="post-message-renderer-"]',
     '[id^="reply-message-renderer-"]',
+    '[id^="message-body-"][aria-labelledby]',
     '[id^="message-body-"]',
     '[data-testid="message-wrapper"]',
-    '[data-tid="chat-pane-message"]',
     '[class*="fui-unstable-ChatItem"]',
     '[data-tid="messageWrapper"]',
     '.message-body-container',
@@ -187,8 +192,12 @@ export function collectPaneMessages() {
   let lastTime = null;
   let lastTimeStr = '';
   const msgs = [];
+  const seenMids = new Set();
 
   messageEls.forEach((el, idx) => {
+    // Skip virtualization placeholders/loaders — they're empty shimmer divs.
+    if (el.matches?.('[data-testid="virtual-list-loader"], [data-testid="vl-placeholders"], [data-testid="vl-buffer"]')) return;
+    if (el.closest?.('[data-testid="vl-placeholders"], [data-testid="vl-buffer"]')) return;
     const item = el.closest('[data-tid="channel-pane-message"]')
       || el.closest('[data-tid="chat-pane-item"]')
       || el.closest('[data-tid="chat-pane-message"]')
@@ -251,8 +260,12 @@ export function collectPaneMessages() {
     }
     if (sender) lastSender = sender;
 
-    // Channel posts have a subject line separate from the body.
-    const subjectEl = item.querySelector('[id^="subject-line-"]') || item.querySelector('h2[id^="subject-line-"]');
+    // Channel posts have a subject line separate from the body. Prefer the
+    // stable data-tid over the id^= form (the id carries the post mid suffix,
+    // but data-tid is the semantic attribute Teams itself keys off).
+    const subjectEl = item.querySelector('[data-tid="subject-line"]')
+      || item.querySelector('h2[data-tid="subject-line"]')
+      || item.querySelector('[id^="subject-line-"]');
     const subject = subjectEl?.textContent?.trim() || '';
 
     let text = '';
@@ -269,12 +282,28 @@ export function collectPaneMessages() {
     if (text && timeStr) text = text.replace(timeStr, '').trim();
     if (!text) return;
 
+    // Stable message id from Teams — useful for dedupe across harvest rounds.
+    const mid = item.querySelector('[data-testid="message-body-flex-wrapper"][data-mid]')?.getAttribute('data-mid')
+      || item.querySelector('[data-mid]')?.getAttribute('data-mid')
+      || item.getAttribute?.('data-mid')
+      || null;
+    const chainId = item.querySelector('[data-reply-chain-id]')?.getAttribute('data-reply-chain-id')
+      || item.getAttribute?.('data-reply-chain-id')
+      || null;
+
+    // Dedupe on mid when available (MESSAGE_SELECTORS can match both the wrapper
+    // and its inner body for the same message).
+    if (mid && seenMids.has(mid)) return;
+    if (mid) seenMids.add(mid);
+
     msgs.push({
       isSystemMessage: false,
       sender: sender || lastSender,
       text: text.slice(0, 5000),
       timeISO: (parsedTime || lastTime)?.toISOString() || null,
       timeLabel: timeStr || lastTimeStr || null,
+      mid,
+      chainId,
     });
   });
 
@@ -296,7 +325,9 @@ export function collectPaneMessages() {
 export function scrollPaneUpBy(delta) {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
-    '[data-tid="message-pane-list"]', '[data-tid="channel-pane-viewport"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
     '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
@@ -362,7 +393,9 @@ export function scrollPaneUpBy(delta) {
 export function scrollPaneToTop() {
   const sels = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
-    '[data-tid="message-pane-list"]', '[data-tid="channel-pane-viewport"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
     '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="chat-pane"]', '[data-shortcut-context="chat-messages-list"]',
@@ -385,6 +418,7 @@ export function scrollPaneToTop() {
 export function scrollPaneToBottom() {
   const ANCHOR_SELS = [
     '[data-tid="channel-pane-viewport"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="chat-message-list"]',
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
@@ -444,7 +478,9 @@ export function scrollPaneToBottom() {
 export function inspectPane() {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
-    '[data-tid="message-pane-list"]', '[data-tid="channel-pane-viewport"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
     '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
@@ -490,13 +526,21 @@ export function inspectPane() {
 // visible DOM so collectPaneMessages can see the reply bodies. Also expands
 // "See more" truncation buttons inside long message bodies.
 export function expandChannelReplies() {
-  // First: click any direct see-more-content nodes (data-testid^="see-more-content-").
-  // These are the expand buttons for long channel post bodies.
   let clicked = 0;
-  for (const el of document.querySelectorAll('[data-testid^="see-more-content-"] button, [data-testid^="see-more-content-"]')) {
+  // Most reliable: "Open N replies" button carries data-tid="response-summary-button".
+  for (const el of document.querySelectorAll('button[data-tid="response-summary-button"]')) {
     if (el.getAttribute('aria-disabled') === 'true' || el.disabled) continue;
     try { el.click(); clicked++; } catch {}
   }
+  // See-more expanders: aria-controls targets the see-more-content-* div, and
+  // the button carries data-track-module-name="seeMoreButton". Using either is
+  // better than matching the literal "See more" text.
+  for (const el of document.querySelectorAll('button[aria-controls^="see-more-content-"], [data-track-module-name="seeMoreButton"], [data-testid^="see-more-content-"] button, [data-testid^="see-more-content-"]')) {
+    if (el.getAttribute('aria-disabled') === 'true' || el.disabled) continue;
+    if (el.getAttribute('aria-expanded') === 'true') continue;
+    try { el.click(); clicked++; } catch {}
+  }
+  // Text-pattern fallback for locale variants and older DOM.
   const patterns = [
     /^\s*(open|show|see|view)\s+\d+\s+(older\s+)?repl(y|ies)/i,
     /^\s*\d+\s+(older\s+)?repl(y|ies)/i,
