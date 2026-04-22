@@ -411,6 +411,19 @@ export function clickSidebarTarget(target) {
   const needleChannel = String(spec.channel || '').trim().toLowerCase();
 
   const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // Very light similarity: ratio of matching chars by sliding window; cheap,
+  // tolerates 1-2 character typos (e.g. "Shapshifters" vs "ShapeShifters").
+  const similarity = (a, b) => {
+    if (!a || !b) return 0;
+    const shorter = a.length < b.length ? a : b;
+    const longer = a.length < b.length ? b : a;
+    if (longer.length === 0) return 1;
+    let matches = 0;
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer.includes(shorter.slice(i, i + 3))) matches++;
+    }
+    return matches / shorter.length;
+  };
   const score = (title, needle) => {
     const t = norm(title);
     const n = norm(needle);
@@ -420,6 +433,10 @@ export function clickSidebarTarget(target) {
     const words = n.split(/\s+/).filter(Boolean);
     if (words.length > 1 && words.every((w) => t.includes(w))) return 50 + Math.min(20, words.length * 5);
     if (t.includes(n)) return 40;
+    // fuzzy fallback: close enough for typos
+    const sim = similarity(t, n);
+    if (sim >= 0.8) return 35;
+    if (sim >= 0.65) return 25;
     return 0;
   };
 
@@ -465,7 +482,7 @@ export function clickSidebarTarget(target) {
       teamCandidates.push({ text: txt.trim().slice(0, 80), score: s });
       if (s > bestTeamScore) { bestTeamScore = s; bestTeam = ti; }
     }
-    if (!bestTeam || bestTeamScore < 40) {
+    if (!bestTeam || bestTeamScore < 25) {
       return {
         found: false, clicked: false, mode: 'team-channel',
         reason: 'team-not-found',
@@ -545,7 +562,7 @@ export function clickSidebarTarget(target) {
     candidates.push({ text: txt.trim().slice(0, 80), score: s, kind });
     if (weighted > bestScore) { bestScore = weighted; best = el; }
   }
-  if (!best || bestScore < 40) {
+  if (!best || bestScore < 25) {
     return {
       found: false, clicked: false, mode: 'name',
       expandedFolders: expanded,
@@ -561,4 +578,66 @@ export function clickSidebarTarget(target) {
     expandedFolders: expanded,
   };
 }
+
+// Ensure the Chat tab is active so the left rail is rendered. Presses Escape
+// first to dismiss any open search overlay, then clicks the Chat app-bar item
+// if the rail is currently missing.
+export function ensureChatTabActive() {
+  // Dismiss any modal/overlay the app may have opened.
+  try {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  } catch {}
+  const railPresent = !!document.querySelector('[data-testid="simple-collab-dnd-rail"]');
+  if (railPresent) return { clicked: false, railPresent: true };
+  const selectors = [
+    'button[aria-label="Chat" i]',
+    '[data-tid="app-bar-chat"]',
+    '[data-tid="app-bar-2a84919f-59d8-4441-a975-2a8c2643b741"]', // internal Chat app id
+    'a[href*="/chat"]',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      try { el.click(); return { clicked: true, via: sel, railPresent: false }; } catch {}
+    }
+  }
+  return { clicked: false, railPresent: false, reason: 'chat-tab-not-found' };
+}
+
+// Scroll the sidebar chat/teams tree to load more virtualized items. Returns
+// whether the scroll moved. Useful when a target isn't in the initial view.
+export function scrollSidebarTree(delta) {
+  const rail = document.querySelector('[data-testid="simple-collab-dnd-rail"]');
+  if (!rail) return { ok: false, reason: 'no-rail' };
+  // Walk up/down to find the scrollable ancestor or descendant.
+  let el = rail;
+  const find = (node) => {
+    if (!node) return null;
+    if (node.scrollHeight > node.clientHeight + 10) {
+      const cs = getComputedStyle(node);
+      if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') return node;
+    }
+    return null;
+  };
+  let scroller = find(rail);
+  if (!scroller) {
+    let p = rail.parentElement;
+    while (p && !scroller) { scroller = find(p); p = p.parentElement; }
+  }
+  if (!scroller) {
+    for (const n of rail.querySelectorAll('*')) {
+      scroller = find(n);
+      if (scroller) break;
+    }
+  }
+  if (!scroller) return { ok: false, reason: 'no-scroller' };
+  const before = scroller.scrollTop;
+  scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Number(delta || 600));
+  return {
+    ok: true, before, after: scroller.scrollTop,
+    atBottom: scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2,
+    scrollHeight: scroller.scrollHeight,
+  };
+}
+
 

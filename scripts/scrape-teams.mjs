@@ -24,6 +24,8 @@ import {
   inspectPane,
   expandChannelReplies,
   clickSidebarTarget,
+  ensureChatTabActive,
+  scrollSidebarTree,
 } from './lib/teams-dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -337,9 +339,26 @@ async function gotoTarget(page, target) {
   const beforeHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
   dbg(`gotoTarget("${displayName}"): before header = ${beforeHeader.header ?? '(none)'}`);
 
-  // Try sidebar tree first (fast, exact, no search UI).
+  // Dismiss any search overlay left over from a prior target, and make sure
+  // the Chat tab is active so the left rail is actually rendered.
+  await page.keyboard.press('Escape').catch(() => {});
+  const tab = await page.evaluate(ensureChatTabActive).catch(() => null);
+  if (tab?.clicked) { dbg(`gotoTarget: activated Chat tab via ${tab.via}`); await page.waitForTimeout(600); }
+
+  // Try sidebar tree first, with up to a few scroll passes to render
+  // virtualized items.
   const sidebarSpec = { name: spec.name, team: spec.team, channel: spec.channel };
-  const sidebar = await page.evaluate(clickSidebarTarget, sidebarSpec).catch((e) => ({ error: String(e) }));
+  let sidebar = null;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    sidebar = await page.evaluate(clickSidebarTarget, sidebarSpec).catch((e) => ({ error: String(e) }));
+    if (sidebar?.clicked) break;
+    // No match yet — scroll the rail and retry.
+    const mv = await page.evaluate(scrollSidebarTree, 700).catch(() => null);
+    dbg(`gotoTarget: sidebar miss on attempt ${attempt}, scroll=${mv ? JSON.stringify({ before: mv.before, after: mv.after, atBottom: mv.atBottom }) : 'n/a'}`);
+    if (!mv?.ok || mv.atBottom || mv.before === mv.after) break;
+    await page.waitForTimeout(300);
+  }
+
   if (sidebar?.clicked) {
     const label = sidebar.mode === 'team-channel'
       ? `team="${sidebar.teamMatch}" channel="${sidebar.channelMatch}" (teamScore=${sidebar.teamScore}, chScore=${sidebar.channelScore})`
