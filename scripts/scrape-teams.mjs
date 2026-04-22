@@ -502,6 +502,7 @@ async function harvestOpenPane(page, cutoff) {
   let reachedOlder = false;
   let stagnant = 0;
   let lastTop = -1;
+  let surface = 'chat';
 
   // Teams opens chats/channels at the last-read position. Jump to the bottom
   // first so unread messages below the last-read marker are captured, then
@@ -514,29 +515,64 @@ async function harvestOpenPane(page, cutoff) {
     await page.waitForTimeout(PANE_SETTLE_MS);
   }
 
-  for (let round = 0; round < MAX_SCROLL_ROUNDS && !reachedOlder && seen.size < MAX_MESSAGES && stagnant < 3; round++) {
+  // Sniff the surface once to pick tuning. Channel runways virtualize
+  // aggressively: new posts only render as Teams lazy-loads them on scroll,
+  // so we need way more patience (matches gediz/teams-web-chat-exporter's
+  // team tuning: maxStagnant=30, maxStagnantAtTop=35, dwellMs=800).
+  const firstSnap = await page.evaluate(collectPaneMessages).catch(() => null);
+  if (firstSnap?.surface) surface = firstSnap.surface;
+  const isChannel = surface === 'channel';
+  const maxRounds = isChannel ? 80 : MAX_SCROLL_ROUNDS;
+  const maxStagnant = isChannel ? 15 : 3;
+  const settleMs = isChannel ? 1200 : PANE_SETTLE_MS;
+  const scrollStepPx = isChannel ? 900 : 1400;
+  dbg(`harvest: surface=${surface}, maxStagnant=${maxStagnant}, settleMs=${settleMs}, scrollStepPx=${scrollStepPx}`);
+
+  // Seed with whatever is currently rendered.
+  if (firstSnap?.msgs) {
+    for (const m of firstSnap.msgs) {
+      const key = m.mid || `${m.timeISO || ''}|${m.sender || ''}|${(m.text || '').slice(0, 80)}`;
+      if (seen.has(key)) continue;
+      seen.set(key, m);
+    }
+    dbg(`harvest seed: ${firstSnap.msgs.length} raw, ${seen.size} unique`);
+  }
+
+  for (let round = 0; round < maxRounds && !reachedOlder && seen.size < MAX_MESSAGES && stagnant < maxStagnant; round++) {
     const exp = await page.evaluate(expandChannelReplies).catch(() => ({ clicked: 0 }));
     if (exp?.clicked) {
       dbg(`harvest round ${round}: expanded ${exp.clicked} reply/see-more button(s)`);
       await page.waitForTimeout(400);
     }
     const snap = await page.evaluate(collectPaneMessages);
-    dbg(`harvest round ${round}: +${snap.msgs.length} raw msgs, hasContainer=${snap.hasContainer}, hasScroller=${snap.hasScroller}, scroll=${JSON.stringify(snap.scroll)}`);
+    const before = seen.size;
     for (const m of snap.msgs) {
-      // Prefer the stable Teams mid for dedupe. Fall back to a composite key
-      // for system messages and edge cases where mid is absent.
       const key = m.mid || `${m.timeISO || ''}|${m.sender || ''}|${(m.text || '').slice(0, 80)}`;
       if (seen.has(key)) continue;
       seen.set(key, m);
       if (m.timeISO && new Date(m.timeISO) < cutoff) reachedOlder = true;
     }
+    const added = seen.size - before;
+    dbg(`harvest round ${round}: raw=${snap.msgs.length}, +${added} new, total=${seen.size}, loading=${snap.loading}, stagnant=${stagnant}, scroll=${JSON.stringify(snap.scroll)}`);
     if (reachedOlder || seen.size >= MAX_MESSAGES) break;
 
-    const mv = await page.evaluate(scrollPaneUpBy, 1400);
+    const mv = await page.evaluate(scrollPaneUpBy, scrollStepPx);
     if (!mv?.ok) { dbg('harvest: no scrollable container, stopping'); break; }
-    if (mv.atTop || mv.after === lastTop) { stagnant++; dbg(`harvest: stagnant=${stagnant} (atTop=${mv.atTop}, top=${mv.after})`); }
-    else { stagnant = 0; lastTop = mv.after; }
-    await page.waitForTimeout(PANE_SETTLE_MS);
+
+    // While Teams is actively loading older history (virtual-list-loader
+    // visible) or we just found new items, don't count stagnation — that's
+    // the scroll doing its job.
+    if (added > 0 || snap.loading) {
+      stagnant = 0;
+      lastTop = mv.after;
+    } else if (mv.atTop || mv.after === lastTop) {
+      stagnant++;
+      dbg(`harvest: stagnant=${stagnant} (atTop=${mv.atTop}, top=${mv.after})`);
+    } else {
+      stagnant = 0;
+      lastTop = mv.after;
+    }
+    await page.waitForTimeout(settleMs);
   }
 
   const header = (await page.evaluate(readHeader)).header;

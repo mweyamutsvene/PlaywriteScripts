@@ -187,7 +187,46 @@ export function collectPaneMessages() {
   const container = getChatContainer();
   if (!container) return { header: null, msgs: [], scroll: null, hasContainer: false, hasScroller: false };
 
-  const messageEls = qa(MESSAGE_SELECTORS, container);
+  // Detect channel surface. Channels virtualize aggressively and our generic
+  // chat MESSAGE_SELECTORS bank can match inner body divs multiple times for
+  // the same post, so when we're on a channel we use a dedicated per-post
+  // anchor (gediz/teams-web-chat-exporter's approach): scope to the channel
+  // runway and enumerate each post via [id^="message-body-"][aria-labelledby]
+  // plus control-message-renderer for system posts. Inline replies live
+  // inside each post under [data-tid="response-surface"] and are picked up
+  // via their own [data-testid="message-body-flex-wrapper"][data-mid].
+  const isChannel = !!document.querySelector(
+    '[data-tid="channel-pane-runway"], [data-tid="channel-pane-viewport"], [data-tid="channel-pane-message"]'
+  );
+  let runway = null;
+  if (isChannel) {
+    const explicit = Array.from(document.querySelectorAll('[data-tid="channel-pane-runway"]'));
+    runway = explicit.find((el) => el.offsetParent !== null && el.getBoundingClientRect().width > 0)
+      || explicit[0]
+      || document.querySelector('[id^="channel-pane-"]:not(#channel-pane-l2):not([data-tid="channel-replies-runway"])')
+      || null;
+  }
+
+  let messageEls;
+  if (isChannel && runway) {
+    // Primary: direct per-post anchors inside the runway.
+    const postAnchors = Array.from(runway.querySelectorAll(
+      '[id^="message-body-"][aria-labelledby], [data-tid="control-message-renderer"]'
+    ));
+    // Also include each inline reply's own flex-wrapper so replies get their
+    // own extraction (not absorbed into the parent post).
+    const replyWrappers = Array.from(runway.querySelectorAll(
+      '[data-tid="response-surface"] [data-testid="message-body-flex-wrapper"][data-mid]'
+    ));
+    messageEls = postAnchors.concat(replyWrappers);
+    // Fallback if the runway is still warming up and anchors aren't ready.
+    if (!messageEls.length) {
+      messageEls = Array.from(runway.querySelectorAll('[data-tid="channel-pane-message"]'));
+    }
+  } else {
+    messageEls = qa(MESSAGE_SELECTORS, container);
+  }
+
   let lastSender = 'Unknown';
   let lastTime = null;
   let lastTimeStr = '';
@@ -342,6 +381,11 @@ export function collectPaneMessages() {
   const hEl = document.querySelector(
     '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [role="banner"] h1, [role="main"] h1, [role="main"] h2'
   );
+  // Signal virtualization activity so the harvest loop can avoid counting
+  // stagnation while Teams is still fetching older posts.
+  const loader = document.querySelector('[data-testid="virtual-list-loader"]');
+  const loading = !!(loader && loader.offsetParent !== null
+    && loader.getBoundingClientRect().height >= 1);
   return {
     header: hEl?.textContent?.trim() || null,
     msgs,
@@ -350,6 +394,8 @@ export function collectPaneMessages() {
       : null,
     hasContainer: true,
     hasScroller: !!scroller,
+    surface: isChannel ? 'channel' : 'chat',
+    loading,
   };
 }
 
@@ -417,7 +463,17 @@ export function scrollPaneUpBy(delta) {
   const el = getScroller();
   if (!el) return { ok: false };
   const before = el.scrollTop;
-  el.scrollTop = Math.max(0, el.scrollTop - Number(delta || 800));
+  // Cap the step at ~60% of clientHeight. Teams' channel virtualization
+  // responds better to organic-sized scrolls than big jumps — large deltas
+  // often skip past the zone where the virtual-list asks for more posts.
+  const maxStep = Math.max(200, Math.floor(el.clientHeight * 0.6));
+  const step = Math.min(Number(delta || 800), maxStep);
+  el.scrollTop = Math.max(0, el.scrollTop - step);
+  // Synthesize scroll + wheel events — Teams v2 channel runways listen for
+  // these to trigger virtualization loading. Pure scrollTop writes sometimes
+  // leave the loader idle.
+  try { el.dispatchEvent(new Event('scroll', { bubbles: true })); } catch {}
+  try { el.dispatchEvent(new WheelEvent('wheel', { deltaY: -step, deltaMode: 0, bubbles: true, cancelable: true })); } catch {}
   return { ok: true, before, after: el.scrollTop, atTop: el.scrollTop <= 1, scrollHeight: el.scrollHeight };
 }
 
