@@ -490,6 +490,13 @@ export function inspectPane() {
 // visible DOM so collectPaneMessages can see the reply bodies. Also expands
 // "See more" truncation buttons inside long message bodies.
 export function expandChannelReplies() {
+  // First: click any direct see-more-content nodes (data-testid^="see-more-content-").
+  // These are the expand buttons for long channel post bodies.
+  let clicked = 0;
+  for (const el of document.querySelectorAll('[data-testid^="see-more-content-"] button, [data-testid^="see-more-content-"]')) {
+    if (el.getAttribute('aria-disabled') === 'true' || el.disabled) continue;
+    try { el.click(); clicked++; } catch {}
+  }
   const patterns = [
     /^\s*(open|show|see|view)\s+\d+\s+(older\s+)?repl(y|ies)/i,
     /^\s*\d+\s+(older\s+)?repl(y|ies)/i,
@@ -497,7 +504,6 @@ export function expandChannelReplies() {
     /^\s*see\s+more\b/i,
   ];
   const nodes = document.querySelectorAll('button, [role="button"]');
-  let clicked = 0;
   for (const btn of nodes) {
     if (btn.getAttribute('aria-disabled') === 'true' || btn.disabled) continue;
     const label = (btn.getAttribute('aria-label') || btn.textContent || '').trim();
@@ -726,6 +732,7 @@ export function ensureChatTabActive() {
   const selectors = [
     'button[aria-label="Chat" i]',
     '[data-tid="app-bar-chat"]',
+    '[data-tid="app-bar-2"]',
     '[data-tid="app-bar-2a84919f-59d8-4441-a975-2a8c2643b741"]', // internal Chat app id
     'a[href*="/chat"]',
   ];
