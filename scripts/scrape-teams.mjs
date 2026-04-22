@@ -523,7 +523,9 @@ async function harvestOpenPane(page, cutoff) {
     const snap = await page.evaluate(collectPaneMessages);
     dbg(`harvest round ${round}: +${snap.msgs.length} raw msgs, hasContainer=${snap.hasContainer}, hasScroller=${snap.hasScroller}, scroll=${JSON.stringify(snap.scroll)}`);
     for (const m of snap.msgs) {
-      const key = `${m.timeISO || ''}|${m.sender || ''}|${(m.text || '').slice(0, 80)}`;
+      // Prefer the stable Teams mid for dedupe. Fall back to a composite key
+      // for system messages and edge cases where mid is absent.
+      const key = m.mid || `${m.timeISO || ''}|${m.sender || ''}|${(m.text || '').slice(0, 80)}`;
       if (seen.has(key)) continue;
       seen.set(key, m);
       if (m.timeISO && new Date(m.timeISO) < cutoff) reachedOlder = true;
@@ -538,11 +540,36 @@ async function harvestOpenPane(page, cutoff) {
   }
 
   const header = (await page.evaluate(readHeader)).header;
-  const messages = [...seen.values()]
+  const flat = [...seen.values()]
     .filter(m => !m.timeISO || new Date(m.timeISO) >= cutoff)
     .sort((a, b) => new Date(a.timeISO || 0) - new Date(b.timeISO || 0));
-  dbg(`harvest done: ${seen.size} unique, ${messages.length} after cutoff filter, reachedOlder=${reachedOlder}`);
-  return { header, messageCount: messages.length, messages };
+
+  // Nest inline channel replies under their parent post. Each reply carries a
+  // parentId (= the parent post's mid) set by collectPaneMessages via the
+  // data-reply-chain-id attribute. Replies whose parent isn't in the captured
+  // window stay as top-level entries so we never drop data silently.
+  const byMid = new Map();
+  for (const m of flat) if (m.mid) byMid.set(m.mid, m);
+  const messages = [];
+  let nested = 0, orphaned = 0;
+  for (const m of flat) {
+    if (m.isReply && m.parentId && byMid.has(m.parentId)) {
+      const parent = byMid.get(m.parentId);
+      (parent.replies ||= []).push(m);
+      nested++;
+    } else {
+      if (m.isReply) orphaned++;
+      messages.push(m);
+    }
+  }
+  // Replies should be in chronological order within a post.
+  for (const m of messages) {
+    if (m.replies?.length) {
+      m.replies.sort((a, b) => new Date(a.timeISO || 0) - new Date(b.timeISO || 0));
+    }
+  }
+  dbg(`harvest done: ${seen.size} unique, ${flat.length} after cutoff, ${nested} replies nested, ${orphaned} orphaned, reachedOlder=${reachedOlder}`);
+  return { header, messageCount: flat.length, topLevelCount: messages.length, replyCount: nested, messages };
 }
 
 function toMarkdown(meta, results) {
@@ -560,7 +587,12 @@ function toMarkdown(meta, results) {
     lines.push('');
     lines.push(`- Status: \`${r.status}\``);
     if (r.header) lines.push(`- Opened as: ${r.header}`);
-    if (typeof r.messageCount === 'number') lines.push(`- Messages: ${r.messageCount}`);
+    if (typeof r.messageCount === 'number') {
+      const detail = (typeof r.topLevelCount === 'number' && typeof r.replyCount === 'number')
+        ? ` (${r.topLevelCount} posts, ${r.replyCount} replies)`
+        : '';
+      lines.push(`- Messages: ${r.messageCount}${detail}`);
+    }
     lines.push('');
     if (r.messages?.length) {
       for (const m of r.messages) {
@@ -571,6 +603,14 @@ function toMarkdown(meta, results) {
         lines.push((m.text ?? '').trim() || '(no text)');
         lines.push('```');
         lines.push('');
+        if (m.replies?.length) {
+          for (const r2 of m.replies) {
+            lines.push(`  - **${r2.sender ?? '(unknown)'}** — ${r2.timeISO ?? r2.timeLabel ?? ''}`);
+            const body = (r2.text ?? '').trim() || '(no text)';
+            for (const ln of body.split('\n')) lines.push(`    > ${ln}`);
+            lines.push('');
+          }
+        }
       }
     }
   }

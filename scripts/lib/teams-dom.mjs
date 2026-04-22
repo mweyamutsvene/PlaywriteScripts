@@ -198,7 +198,29 @@ export function collectPaneMessages() {
     // Skip virtualization placeholders/loaders — they're empty shimmer divs.
     if (el.matches?.('[data-testid="virtual-list-loader"], [data-testid="vl-placeholders"], [data-testid="vl-buffer"]')) return;
     if (el.closest?.('[data-testid="vl-placeholders"], [data-testid="vl-buffer"]')) return;
-    const item = el.closest('[data-tid="channel-pane-message"]')
+
+    // Per-message extraction scope. In a channel, [data-tid="channel-pane-message"]
+    // (the outer post) *contains* inline reply wrappers inside its
+    // [data-tid="response-surface"] — so if we used that as the scope for all of
+    // them, every reply would extract the parent post's sender/body/timestamp.
+    // Each post AND each inline reply has its own [id^="message-body-"][role="group"]
+    // container (scoping author/timestamp/body), and its own
+    // [data-testid="message-body-flex-wrapper"][data-mid] (stable id). Prefer the
+    // group, fall back to the flex-wrapper, fall back to the legacy chain.
+    const flexWrapper = el.matches?.('[data-testid="message-body-flex-wrapper"]')
+      ? el
+      : (el.closest?.('[data-testid="message-body-flex-wrapper"]')
+        || el.querySelector?.('[data-testid="message-body-flex-wrapper"][data-mid]')
+        || null);
+    const bodyGroup = el.matches?.('[id^="message-body-"][role="group"]')
+      ? el
+      : (el.closest?.('[id^="message-body-"][role="group"]')
+        || flexWrapper?.closest?.('[id^="message-body-"][role="group"]')
+        || null);
+    const item = bodyGroup
+      || flexWrapper
+      || el.closest('[data-tid="channel-replies-pane-message"]')
+      || el.closest('[data-tid="channel-pane-message"]')
       || el.closest('[data-tid="chat-pane-item"]')
       || el.closest('[data-tid="chat-pane-message"]')
       || el.closest('[data-tid="message-pane-item"]')
@@ -282,17 +304,24 @@ export function collectPaneMessages() {
     if (text && timeStr) text = text.replace(timeStr, '').trim();
     if (!text) return;
 
-    // Stable message id from Teams — useful for dedupe across harvest rounds.
-    const mid = item.querySelector('[data-testid="message-body-flex-wrapper"][data-mid]')?.getAttribute('data-mid')
+    // Stable message id from Teams — useful for dedupe across harvest rounds
+    // and for linking inline thread replies to their parent post.
+    // Teams sets data-mid = this message's id and data-reply-chain-id =
+    // the thread-root id. For the top-level post they're equal; for inline
+    // replies, chainId points to the parent post's mid.
+    const mid = flexWrapper?.getAttribute?.('data-mid')
+      || item.querySelector('[data-testid="message-body-flex-wrapper"][data-mid]')?.getAttribute('data-mid')
       || item.querySelector('[data-mid]')?.getAttribute('data-mid')
       || item.getAttribute?.('data-mid')
       || null;
-    const chainId = item.querySelector('[data-reply-chain-id]')?.getAttribute('data-reply-chain-id')
+    const chainId = flexWrapper?.getAttribute?.('data-reply-chain-id')
+      || item.querySelector('[data-reply-chain-id]')?.getAttribute('data-reply-chain-id')
       || item.getAttribute?.('data-reply-chain-id')
       || null;
+    const isReply = !!(chainId && mid && chainId !== mid);
+    const parentId = isReply ? chainId : null;
 
-    // Dedupe on mid when available (MESSAGE_SELECTORS can match both the wrapper
-    // and its inner body for the same message).
+    // Dedupe on mid when available.
     if (mid && seenMids.has(mid)) return;
     if (mid) seenMids.add(mid);
 
@@ -304,6 +333,8 @@ export function collectPaneMessages() {
       timeLabel: timeStr || lastTimeStr || null,
       mid,
       chainId,
+      parentId,
+      isReply,
     });
   });
 
