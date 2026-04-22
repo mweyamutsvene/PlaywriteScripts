@@ -23,6 +23,7 @@ import {
   scrollPaneUpBy,
   inspectPane,
   expandChannelReplies,
+  clickSidebarTarget,
 } from './lib/teams-dom.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,7 +90,12 @@ function normalizeTarget(t) {
   if (typeof t === 'string') return { name: t };
   if (t && typeof t === 'object') {
     if (t.name) return { name: String(t.name), label: t.label };
-    if (t.team && t.channel) return { name: `${t.team} ${t.channel}`, label: `${t.team} / ${t.channel}` };
+    if (t.team && t.channel) return {
+      name: `${t.team} ${t.channel}`,
+      label: `${t.team} / ${t.channel}`,
+      team: String(t.team),
+      channel: String(t.channel),
+    };
     if (t.match) return { name: String(t.match) };
   }
   throw new Error(`Invalid target: ${JSON.stringify(t)}`);
@@ -214,7 +220,7 @@ function normalizeTarget(t) {
   for (const t of targets) {
     console.log(`  â†’ ${t.label || t.name}`);
     try {
-      const opened = await gotoTarget(page, t.name);
+      const opened = await gotoTarget(page, t);
       if (!opened) {
         results.push({ target: t, status: 'not-found' });
         console.warn(`    âœ— could not open via Go-to`);
@@ -325,14 +331,58 @@ async function openSearchBox(page) {
   return true;
 }
 
-async function gotoTarget(page, name) {
+async function gotoTarget(page, target) {
+  const spec = (typeof target === 'string') ? { name: target } : target;
+  const displayName = spec.label || spec.name || `${spec.team || ''} / ${spec.channel || ''}`.trim();
   const beforeHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
-  dbg(`gotoTarget("${name}"): before header = ${beforeHeader.header ?? '(none)'}`);
+  dbg(`gotoTarget("${displayName}"): before header = ${beforeHeader.header ?? '(none)'}`);
+
+  // Try sidebar tree first (fast, exact, no search UI).
+  const sidebarSpec = { name: spec.name, team: spec.team, channel: spec.channel };
+  const sidebar = await page.evaluate(clickSidebarTarget, sidebarSpec).catch((e) => ({ error: String(e) }));
+  if (sidebar?.clicked) {
+    const label = sidebar.mode === 'team-channel'
+      ? `team="${sidebar.teamMatch}" channel="${sidebar.channelMatch}" (teamScore=${sidebar.teamScore}, chScore=${sidebar.channelScore})`
+      : `"${sidebar.matchText}" (score=${sidebar.score})`;
+    dbg(`gotoTarget: sidebar hit ${label}, expanded=${sidebar.expandedFolders}`);
+    const ok = await page.waitForFunction(
+      (prev) => {
+        const hEl = document.querySelector(
+          '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [role="main"] h1, [role="main"] h2'
+        );
+        const h = hEl?.textContent?.trim() || null;
+        const hasMsgs = document.querySelectorAll('[data-tid="chat-pane-item"], [data-tid="chat-pane-message"], [data-tid="message-pane-item"], [data-tid^="post-message-renderer"]').length > 0;
+        return (h && h !== prev) || hasMsgs;
+      },
+      beforeHeader.header,
+      { timeout: 15_000 }
+    ).then(() => true).catch(() => false);
+    const afterHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
+    dbg(`gotoTarget: sidebar success=${ok}, after header = ${afterHeader.header ?? '(none)'}`);
+    if (ok) return true;
+    dbg('gotoTarget: sidebar click did not settle, falling back to search');
+  } else {
+    const m = sidebar?.mode || 'name';
+    if (m === 'team-channel') {
+      dbg(`gotoTarget: sidebar miss (team-channel, reason=${sidebar?.reason})`);
+      if (sidebar?.teamCandidates?.length) {
+        dbg(`  team candidates: ${sidebar.teamCandidates.map(c => `"${c.text}"(${c.score})`).join(', ')}`);
+      }
+      if (sidebar?.channelCandidates?.length) {
+        dbg(`  channel candidates under "${sidebar.teamMatch}": ${sidebar.channelCandidates.map(c => `"${c.text}"(${c.score})`).join(', ')}`);
+      }
+    } else {
+      dbg(`gotoTarget: sidebar miss (candidates=${sidebar?.candidateCount ?? 0}, expanded=${sidebar?.expandedFolders ?? 0})`);
+      if (sidebar?.topCandidates?.length) {
+        dbg(`  top candidates: ${sidebar.topCandidates.map(c => `"${c.text}"(${c.score}${c.kind ? `,${c.kind}` : ''})`).join(', ')}`);
+      }
+    }
+  }
 
   await openSearchBox(page);
   await page.waitForTimeout(500);
 
-  const opened = await pickFromSuggestions(page, name);
+  const opened = await pickFromSuggestions(page, spec.name);
   if (!opened) {
     dbg('gotoTarget: pickFromSuggestions returned false');
     return false;
@@ -352,7 +402,7 @@ async function gotoTarget(page, name) {
   ).then(() => true).catch(() => false);
 
   const afterHeader = await page.evaluate(readHeader).catch(() => ({ header: null }));
-  dbg(`gotoTarget: success=${success}, after header = ${afterHeader.header ?? '(none)'}`);
+  dbg(`gotoTarget: search success=${success}, after header = ${afterHeader.header ?? '(none)'}`);
   return success;
 }
 

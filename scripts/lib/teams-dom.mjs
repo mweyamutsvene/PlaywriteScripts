@@ -43,7 +43,6 @@ export function collectPaneMessages() {
     '[role="listitem"]',
   ];
   const TIMESTAMP_SELECTORS = [
-    '[data-tid^="timestamp-"]',
     '[class*="fui-ChatMessage__timestamp"]',
     '[class*="fui-ChatMyMessage__timestamp"]',
     '[class*="__timestamp"]',
@@ -54,9 +53,9 @@ export function collectPaneMessages() {
     '[class*="Timestamp"]',
     '[class*="time-stamp"]',
     '[datetime]',
+    '[data-tid^="timestamp-"]',
   ];
   const SENDER_SELECTORS = [
-    '[data-tid^="author-"]',
     '[class*="fui-ChatMessage__author"]',
     '[class*="fui-ChatMyMessage__author"]',
     '[class*="__author"]',
@@ -68,10 +67,9 @@ export function collectPaneMessages() {
     '[class*="Sender"]',
     '[class*="displayName"]',
     '[class*="DisplayName"]',
+    '[data-tid^="author-"]',
   ];
   const MESSAGE_TEXT_SELECTORS = [
-    '[data-tid="message-body-content"]',
-    '[data-tid="message-body"]',
     '[class*="fui-ChatMessage__body"]',
     '[class*="fui-ChatMyMessage__body"]',
     '[class*="__body"]',
@@ -83,6 +81,8 @@ export function collectPaneMessages() {
     '[class*="MessageContent"]',
     '[class*="message-body"]',
     '[data-tid="messageBodyContent"]',
+    '[data-tid="message-body-content"]',
+    '[data-tid="message-body"]',
   ];
 
   const q = (selectors, parent) => {
@@ -397,5 +397,168 @@ export function expandChannelReplies() {
     }
   }
   return { clicked };
+}
+
+// Navigate via the left sidebar tree (Chat list / Teams list) instead of search.
+// Accepts either a bare name string, or an object: { name?, team?, channel? }.
+// When { team, channel } is provided, finds the team treeitem first, expands
+// it if collapsed, then scopes the channel search to that team's subtree.
+// Returns a diagnostics object describing what was found/clicked.
+export function clickSidebarTarget(target) {
+  const spec = (typeof target === 'string') ? { name: target } : (target || {});
+  const needleName = String(spec.name || '').trim().toLowerCase();
+  const needleTeam = String(spec.team || '').trim().toLowerCase();
+  const needleChannel = String(spec.channel || '').trim().toLowerCase();
+
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const score = (title, needle) => {
+    const t = norm(title);
+    const n = norm(needle);
+    if (!t || !n) return 0;
+    if (t === n) return 100;
+    if (t.startsWith(n)) return 80;
+    const words = n.split(/\s+/).filter(Boolean);
+    if (words.length > 1 && words.every((w) => t.includes(w))) return 50 + Math.min(20, words.length * 5);
+    if (t.includes(n)) return 40;
+    return 0;
+  };
+
+  const expandFolder = (folder) => {
+    if (!folder) return false;
+    if (folder.getAttribute('aria-expanded') === 'true') return false;
+    const header = folder.querySelector('[data-testid="conversation-folder-header"], [data-inp="simple-collab-folder-header"]') || folder;
+    try { header.click(); return true; } catch { return false; }
+  };
+
+  // 1) Expand top-level folders (Chat list, Teams & channels, Favorites, etc.)
+  let expanded = 0;
+  const topFolders = document.querySelectorAll(
+    '[data-testid="simple-collab-dnd-rail"] [data-item-type="custom-folder"][aria-expanded="false"], '
+    + '[data-testid="simple-collab-dnd-rail"] [data-item-type="teams-and-channels"][aria-expanded="false"], '
+    + '[data-testid="simple-collab-dnd-rail"] [data-item-type="chats"][aria-expanded="false"]'
+  );
+  for (const f of topFolders) if (expandFolder(f)) expanded++;
+
+  // Helper: click a treeitem (prefer its main switch/content area).
+  const clickTreeitem = (el) => {
+    const item = el.closest('[role="treeitem"]') || el;
+    const clickable = item.querySelector('[data-inp="simple-collab-chat-switch"], [data-inp="simple-collab-list-item-teams-and-channels"]')
+      || item.querySelector('[data-testid="list-item"]')
+      || item;
+    try { clickable.click(); return true; } catch { return false; }
+  };
+
+  // 2) TEAM + CHANNEL path
+  if (needleTeam && needleChannel) {
+    // Find all team treeitems.
+    const teamItems = [...document.querySelectorAll('[role="treeitem"][data-item-type="team"]')];
+    let bestTeam = null;
+    let bestTeamScore = 0;
+    const teamCandidates = [];
+    for (const ti of teamItems) {
+      // Team label is in a span with id starting "title-team-list-item-"
+      const titleEl = ti.querySelector('[id^="title-team-list-item-"]')
+        || ti.querySelector('[class*="team-type-name"]')
+        || ti.querySelector('span');
+      const txt = titleEl?.textContent || '';
+      const s = score(txt, needleTeam);
+      teamCandidates.push({ text: txt.trim().slice(0, 80), score: s });
+      if (s > bestTeamScore) { bestTeamScore = s; bestTeam = ti; }
+    }
+    if (!bestTeam || bestTeamScore < 40) {
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: 'team-not-found',
+        expandedFolders: expanded,
+        teamCandidates: teamCandidates.sort((a, b) => b.score - a.score).slice(0, 8),
+      };
+    }
+    // Expand the team if collapsed.
+    if (bestTeam.getAttribute('aria-expanded') === 'false') {
+      const header = bestTeam.querySelector('[data-testid^="list-item-teams-and-channels"]') || bestTeam;
+      try { header.click(); expanded++; } catch {}
+    }
+    // Channels live as siblings of the team treeitem, inside the team's sibling `role=group`.
+    // Structure: <div treeitem data-item-type=team>...</div> <div role=group> <div treeitem data-item-type=channel/> ... </div>
+    const group = bestTeam.nextElementSibling?.matches('[role="group"]')
+      ? bestTeam.nextElementSibling
+      : bestTeam.parentElement?.querySelector(':scope > [role="group"]');
+    const channelItems = group
+      ? [...group.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+      : [];
+    let bestCh = null;
+    let bestChScore = 0;
+    const chCandidates = [];
+    for (const ci of channelItems) {
+      const titleEl = ci.querySelector('[id^="title-channel-list-item-"]')
+        || ci.querySelector('[class*="channel-type-name"]')
+        || ci.querySelector('span');
+      const txt = titleEl?.textContent || '';
+      const s = score(txt, needleChannel);
+      chCandidates.push({ text: txt.trim().slice(0, 80), score: s });
+      if (s > bestChScore) { bestChScore = s; bestCh = ci; }
+    }
+    if (!bestCh || bestChScore < 40) {
+      // "See all channels" may hide it — try clicking that and re-query once.
+      const seeAll = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"]');
+      if (seeAll) {
+        try { seeAll.click(); } catch {}
+      }
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: 'channel-not-found-in-team',
+        teamMatch: (bestTeam.textContent || '').trim().slice(0, 80),
+        expandedFolders: expanded,
+        channelCandidates: chCandidates.sort((a, b) => b.score - a.score).slice(0, 10),
+      };
+    }
+    const ok = clickTreeitem(bestCh);
+    return {
+      found: true, clicked: ok, mode: 'team-channel',
+      teamMatch: (bestTeam.querySelector('[id^="title-team-list-item-"]')?.textContent || '').trim(),
+      channelMatch: (bestCh.querySelector('[id^="title-channel-list-item-"]')?.textContent || '').trim(),
+      teamScore: bestTeamScore, channelScore: bestChScore,
+      expandedFolders: expanded,
+    };
+  }
+
+  // 3) NAME-only path — search across all visible titles (chats + teams + channels).
+  const needle = needleName;
+  if (!needle) return { found: false, clicked: false, reason: 'empty-name' };
+
+  const titleEls = document.querySelectorAll(
+    '[data-testid="simple-collab-dnd-rail"] [id^="title-chat-list-item_"], '
+    + '[data-testid="simple-collab-dnd-rail"] [id^="title-channel-list-item-"], '
+    + '[data-testid="simple-collab-dnd-rail"] [id^="title-team-list-item-"], '
+    + '[data-testid="simple-collab-dnd-rail"] [role="treeitem"] span[id^="title-"]'
+  );
+  const candidates = [];
+  let best = null;
+  let bestScore = 0;
+  for (const el of titleEls) {
+    const txt = el.textContent || '';
+    const s = score(txt, needle);
+    // Prefer chats and channels over teams for name-only queries.
+    const ti = el.closest('[role="treeitem"]');
+    const kind = ti?.getAttribute('data-item-type') || '';
+    const weighted = s + (kind === 'chat' ? 3 : kind === 'channel' ? 1 : 0);
+    candidates.push({ text: txt.trim().slice(0, 80), score: s, kind });
+    if (weighted > bestScore) { bestScore = weighted; best = el; }
+  }
+  if (!best || bestScore < 40) {
+    return {
+      found: false, clicked: false, mode: 'name',
+      expandedFolders: expanded,
+      candidateCount: candidates.length,
+      topCandidates: candidates.sort((a, b) => b.score - a.score).slice(0, 8),
+    };
+  }
+  const ok = clickTreeitem(best);
+  return {
+    found: true, clicked: ok, mode: 'name',
+    matchText: best.textContent?.trim() || '',
+    score: bestScore,
+    expandedFolders: expanded,
+  };
 }
 

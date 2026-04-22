@@ -50,13 +50,40 @@ npm run scrape:outlook -- --days 3
 # Teams: inspect the DOM first to confirm selectors match your tenant
 npm run scrape:teams -- --inspect --debug
 
-# Teams: one-off by name (resolves chats and channels)
-npm run scrape:teams -- --names "Standup,Platform Eng General" --days 1 --debug
+# Teams: by sidebar name (chat, group chat, or a team/channel shown in the left rail)
+npm run scrape:teams -- --names "Standup,iOS Dev" --days 1 --debug
 
 # Teams: from a targets file (see teams-targets.example.json)
 copy teams-targets.example.json teams-targets.json   # edit to taste (gitignored)
 npm run scrape:teams -- --targets teams-targets.json --days 3
 ```
+
+### Target formats
+
+`--targets <file>` points at a JSON file shaped like:
+
+```json
+{
+  "targets": [
+    "Team Standup",
+    { "team": "iOS Engineering Community", "channel": "General" },
+    { "name": "Nick Baudin", "label": "Nick (1:1)" }
+  ]
+}
+```
+
+- **String** — matched against any chat, group chat, team, or channel title in
+  the left sidebar. Favors chats over teams when multiple items share a name.
+- **`{ team, channel }`** — team-scoped: finds the team in the sidebar, expands
+  it if collapsed, then matches `channel` **only within that team's subtree**.
+  Required for channels with common names like `General`, since almost every
+  team has one.
+- **`{ name, label? }`** — same as the string form but lets you set a friendlier
+  label used in the Markdown output.
+
+Navigation tries the **left-rail tree first** (fast, exact, no search UI). If
+that misses, it falls back to Teams' unified search. With `--debug` you'll see
+which path was used and, on a miss, the top sidebar candidates with scores.
 
 ### Teams script flags
 

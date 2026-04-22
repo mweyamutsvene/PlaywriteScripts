@@ -1,7 +1,9 @@
 {
   "targets": [
     "Team Standup",
-    { "team": "Platform Eng", "channel": "General" },
-    { "name": "Nick Baudin", "label": "Nick (1:1)" }
+    { "team": "iOS Engineering Community", "channel": "General" },
+    { "team": "Digital Security Organization", "channel": "Engineering Patterns" },
+    { "name": "Nick Baudin", "label": "Nick (1:1)" },
+    { "name": "iOS Dev", "label": "iOS Dev (group chat)" }
   ]
 }
