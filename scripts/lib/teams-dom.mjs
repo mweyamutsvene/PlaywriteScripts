@@ -7,7 +7,7 @@
 
 export function readHeader() {
   const hEl = document.querySelector(
-    '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channel-header"] h1, [data-tid="channel-header"] h2, [role="banner"] h1, [role="main"] h1, [role="main"] h2'
+    '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channelTitle-text"], [data-tid="channel-header"] h1, [data-tid="channel-header"] h2, [role="banner"] h1, [role="main"] h1, [role="main"] h2'
   );
   return { header: hEl?.textContent?.trim() || null, title: document.title };
 }
@@ -19,6 +19,8 @@ export function collectPaneMessages() {
     '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]',
     '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]',
+    '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
     '.ts-message-list-container',
     '[data-tid="chat-pane"]',
@@ -32,8 +34,9 @@ export function collectPaneMessages() {
   const MESSAGE_SELECTORS = [
     '[data-tid="chat-pane-item"]',
     '[data-tid="message-pane-item"]',
-    '[data-tid^="post-message-renderer"]',
-    '[data-tid^="reply-message-renderer"]',
+    '[id^="post-message-renderer-"]',
+    '[id^="reply-message-renderer-"]',
+    '[id^="message-body-"]',
     '[data-testid="message-wrapper"]',
     '[data-tid="chat-pane-message"]',
     '[class*="fui-unstable-ChatItem"]',
@@ -184,8 +187,8 @@ export function collectPaneMessages() {
     const item = el.closest('[data-tid="chat-pane-item"]')
       || el.closest('[data-tid="chat-pane-message"]')
       || el.closest('[data-tid="message-pane-item"]')
-      || el.closest('[data-tid^="post-message-renderer"]')
-      || el.closest('[data-tid^="reply-message-renderer"]')
+      || el.closest('[id^="post-message-renderer-"]')
+      || el.closest('[id^="reply-message-renderer-"]')
       || el;
 
     if (item.querySelector('[class*="fui-Divider"]')
@@ -282,6 +285,7 @@ export function scrollPaneUpBy(delta) {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
     '.ts-message-list-container', '[data-tid="chat-pane"]',
     '[role="main"] [data-is-scrollable="true"]', '.message-list',
@@ -322,6 +326,7 @@ export function scrollPaneToTop() {
   const sels = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="chat-pane"]', '[role="main"] [data-is-scrollable="true"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
   ];
@@ -339,6 +344,7 @@ export function inspectPane() {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
     '.ts-message-list-container', '[data-tid="chat-pane"]',
     '[role="main"] [data-is-scrollable="true"]', '.message-list',
@@ -347,7 +353,8 @@ export function inspectPane() {
   ];
   const MESSAGE_SELECTORS = [
     '[data-tid="chat-pane-item"]', '[data-tid="message-pane-item"]',
-    '[data-tid^="post-message-renderer"]', '[data-tid^="reply-message-renderer"]',
+    '[id^="post-message-renderer-"]', '[id^="reply-message-renderer-"]',
+    '[id^="message-body-"]',
     '[data-testid="message-wrapper"]',
     '[data-tid="chat-pane-message"]', '[class*="fui-unstable-ChatItem"]',
     '[data-tid="messageWrapper"]', '.message-body-container',

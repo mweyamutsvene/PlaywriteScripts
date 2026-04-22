@@ -370,13 +370,13 @@ async function gotoTarget(page, target) {
         // URL changed? Channels and chats both swap the URL on navigation.
         if (location.href !== prevUrl) return true;
         const hEl = document.querySelector(
-          '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channel-header"], [role="main"] h1, [role="main"] h2'
+          '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channelTitle-text"], [data-tid="channel-header"], [role="main"] h1, [role="main"] h2'
         );
         const h = hEl?.textContent?.trim() || null;
         if (h && h !== prev) return true;
         // Any message/post/reply renderer visible?
         const hasMsgs = document.querySelectorAll(
-          '[data-tid="chat-pane-item"], [data-tid="chat-pane-message"], [data-tid="message-pane-item"], [data-tid^="post-message-renderer"], [data-tid^="reply-message-renderer"], [data-tid="message-pane-list-surface"], [data-tid="message-pane-list"], [data-tid="threadBodyList"], [data-tid="channel-content"]'
+          '[data-tid="chat-pane-item"], [data-tid="chat-pane-message"], [data-tid="message-pane-item"], [data-tid="channel-pane-runway"], [id="channel-pane"], [id^="post-message-renderer-"], [id^="reply-message-renderer-"], [id^="message-body-"], [data-tid="message-pane-list-surface"], [data-tid="message-pane-list"], [data-tid="threadBodyList"], [data-tid="channel-content"]'
         ).length > 0;
         return hasMsgs;
       },
