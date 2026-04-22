@@ -459,8 +459,9 @@ export function clickSidebarTarget(target) {
   // Helper: click a treeitem (prefer its main switch/content area).
   const clickTreeitem = (el) => {
     const item = el.closest('[role="treeitem"]') || el;
-    const clickable = item.querySelector('[data-inp="simple-collab-chat-switch"], [data-inp="simple-collab-list-item-teams-and-channels"]')
+    const clickable = item.querySelector('[data-inp="simple-collab-chat-switch"], [data-inp="simple-collab-channel-switch"], [data-inp="simple-collab-list-item-teams-and-channels"]')
       || item.querySelector('[data-testid="list-item"]')
+      || item.querySelector('[class*="TreeItemLayout__main"]')
       || item;
     try { clickable.click(); return true; } catch { return false; }
   };
@@ -495,14 +496,37 @@ export function clickSidebarTarget(target) {
       const header = bestTeam.querySelector('[data-testid^="list-item-teams-and-channels"]') || bestTeam;
       try { header.click(); expanded++; } catch {}
     }
-    // Channels live as siblings of the team treeitem, inside the team's sibling `role=group`.
-    // Structure: <div treeitem data-item-type=team>...</div> <div role=group> <div treeitem data-item-type=channel/> ... </div>
-    const group = bestTeam.nextElementSibling?.matches('[role="group"]')
-      ? bestTeam.nextElementSibling
-      : bestTeam.parentElement?.querySelector(':scope > [role="group"]');
-    const channelItems = group
-      ? [...group.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
-      : [];
+
+    // Match channels to this team by thread ID extracted from the team's
+    // data-fui-tree-item-value (e.g. "OneGQL_Team|19:<id>@thread.tacv2").
+    // Channel items have their team's thread ID embedded in their own
+    // data-fui-tree-item-value and data-testid ("sc-channel-list-item-<id>"),
+    // which is far more reliable than walking DOM siblings.
+    const teamValue = bestTeam.getAttribute('data-fui-tree-item-value') || '';
+    const teamIdMatch = teamValue.match(/19:[0-9a-f]+@thread\.(?:tacv2|skype)/i);
+    const teamThreadId = teamIdMatch ? teamIdMatch[0] : null;
+
+    let channelItems = [];
+    if (teamThreadId) {
+      channelItems = [...document.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+        .filter((ci) => {
+          const v = ci.getAttribute('data-fui-tree-item-value') || '';
+          const t = ci.getAttribute('data-testid') || '';
+          return v.includes(teamThreadId) || t.includes(teamThreadId);
+        });
+    }
+    // Fallback: positional (legacy behavior) if thread-ID pairing found nothing.
+    if (channelItems.length === 0) {
+      let group = null;
+      let sib = bestTeam.nextElementSibling;
+      while (sib && !group) {
+        if (sib.matches?.('[role="group"]')) group = sib;
+        sib = sib.nextElementSibling;
+      }
+      channelItems = group
+        ? [...group.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+        : [];
+    }
     let bestCh = null;
     let bestChScore = 0;
     const chCandidates = [];
