@@ -18,12 +18,14 @@ export function collectPaneMessages() {
     '[class*="fui-Chat"]',
     '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]',
+    '[data-tid="channel-pane-viewport"]',
     '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]',
     '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
     '.ts-message-list-container',
     '[data-tid="chat-pane"]',
+    '[data-shortcut-context="chat-messages-list"]',
     '[role="main"] [data-is-scrollable="true"]',
     '.message-list',
     '[class*="message-list"]',
@@ -284,10 +286,12 @@ export function collectPaneMessages() {
 export function scrollPaneUpBy(delta) {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
-    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
     '.ts-message-list-container', '[data-tid="chat-pane"]',
+    '[data-shortcut-context="chat-messages-list"]',
     '[role="main"] [data-is-scrollable="true"]', '.message-list',
     '[class*="message-list"]', '[class*="MessageList"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
@@ -348,9 +352,11 @@ export function scrollPaneUpBy(delta) {
 export function scrollPaneToTop() {
   const sels = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
-    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
-    '[data-tid="chat-pane"]', '[role="main"] [data-is-scrollable="true"]',
+    '[data-tid="chat-pane"]', '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
   ];
   let el = null;
@@ -368,10 +374,12 @@ export function scrollPaneToTop() {
 // jump to the newest first and then harvest backwards.
 export function scrollPaneToBottom() {
   const ANCHOR_SELS = [
+    '[data-tid="channel-pane-viewport"]',
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
     '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
-    '[data-tid="chat-pane"]', '[role="main"] [data-is-scrollable="true"]',
+    '[data-tid="chat-pane"]', '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
     // Posts anchor — walk up from a known post element to find scroller.
     '[id^="post-message-renderer-"]', '[id^="message-body-"]',
@@ -426,10 +434,12 @@ export function scrollPaneToBottom() {
 export function inspectPane() {
   const CHAT_CONTAINER_SELECTORS = [
     '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
-    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
     '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
     '[data-tid="threadBodyList"]',
     '.ts-message-list-container', '[data-tid="chat-pane"]',
+    '[data-shortcut-context="chat-messages-list"]',
     '[role="main"] [data-is-scrollable="true"]', '.message-list',
     '[class*="message-list"]', '[class*="MessageList"]',
     '[data-tid="messageListContainer"]', '[role="log"]',
