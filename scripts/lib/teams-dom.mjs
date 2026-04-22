@@ -36,6 +36,7 @@ export function collectPaneMessages() {
   const MESSAGE_SELECTORS = [
     '[data-tid="chat-pane-item"]',
     '[data-tid="message-pane-item"]',
+    '[data-tid="channel-pane-message"]',
     '[id^="post-message-renderer-"]',
     '[id^="reply-message-renderer-"]',
     '[id^="message-body-"]',
@@ -75,6 +76,8 @@ export function collectPaneMessages() {
     '[data-tid^="author-"]',
   ];
   const MESSAGE_TEXT_SELECTORS = [
+    '[data-tid="message-body"][data-message-content]',
+    '[id^="content-"][data-message-content]',
     '[class*="fui-ChatMessage__body"]',
     '[class*="fui-ChatMyMessage__body"]',
     '[class*="__body"]',
@@ -186,7 +189,8 @@ export function collectPaneMessages() {
   const msgs = [];
 
   messageEls.forEach((el, idx) => {
-    const item = el.closest('[data-tid="chat-pane-item"]')
+    const item = el.closest('[data-tid="channel-pane-message"]')
+      || el.closest('[data-tid="chat-pane-item"]')
       || el.closest('[data-tid="chat-pane-message"]')
       || el.closest('[data-tid="message-pane-item"]')
       || el.closest('[id^="post-message-renderer-"]')
@@ -247,10 +251,16 @@ export function collectPaneMessages() {
     }
     if (sender) lastSender = sender;
 
+    // Channel posts have a subject line separate from the body.
+    const subjectEl = item.querySelector('[id^="subject-line-"]') || item.querySelector('h2[id^="subject-line-"]');
+    const subject = subjectEl?.textContent?.trim() || '';
+
     let text = '';
-    const bodyEl = q(MESSAGE_TEXT_SELECTORS, el);
+    const bodyEl = q(MESSAGE_TEXT_SELECTORS, item);
     if (bodyEl) text = bodyEl.textContent?.trim() || '';
     if (!text) text = el.textContent?.trim() || '';
+    if (subject && text && !text.startsWith(subject)) text = `${subject}\n\n${text}`;
+    else if (subject && !text) text = subject;
     if (text && sender) {
       const esc = sender.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       text = text.replace(new RegExp(`^.*?by\\s+${esc}`, 'i'), '').trim();
