@@ -789,10 +789,16 @@ export function clickSidebarTarget(target) {
     // Fallback: positional (legacy behavior) if thread-ID pairing found nothing.
     let teamGroup = null;
     if (channelItems.length === 0) {
-      teamGroup = findGroupForTeam();
-      channelItems = teamGroup
-        ? [...teamGroup.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
-        : [];
+      // Channels may be nested inside the team treeitem OR in a sibling
+      // [role="group"]. Try descendants first (current Teams v2 layout),
+      // then fall back to sibling group (older layout).
+      channelItems = [...bestTeam.querySelectorAll('[role="treeitem"][data-item-type="channel"]')];
+      if (channelItems.length === 0) {
+        teamGroup = findGroupForTeam();
+        channelItems = teamGroup
+          ? [...teamGroup.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+          : [];
+      }
     }
 
     // Click "See all channels" if the team is showing a truncated list. This
@@ -808,6 +814,12 @@ export function clickSidebarTarget(target) {
       return false;
     })();
 
+    const teamTitleText = (
+      bestTeam.querySelector('[id^="title-team-list-item-"]')?.textContent
+      || bestTeam.querySelector('[class*="team-type-name"]')?.textContent
+      || ''
+    ).trim().slice(0, 80);
+
     // If we just expanded the team OR just clicked "see all", channel items
     // may not be in the DOM yet. Bail with needsRetry so the caller re-runs
     // after a short wait.
@@ -815,9 +827,10 @@ export function clickSidebarTarget(target) {
       return {
         found: false, clicked: false, mode: 'team-channel',
         reason: wasCollapsed ? 'team-just-expanded' : seeAllClicked ? 'see-all-just-clicked' : 'no-channels-rendered',
-        needsRetry: true,
-        teamMatch: (bestTeam.textContent || '').trim().slice(0, 80),
+        needsRetry: wasCollapsed || seeAllClicked,
+        teamMatch: teamTitleText,
         teamScore: bestTeamScore,
+        channelItemsFound: channelItems.length,
         expandedFolders: expanded,
       };
     }
@@ -845,7 +858,7 @@ export function clickSidebarTarget(target) {
           found: false, clicked: false, mode: 'team-channel',
           reason: 'see-all-clicked-on-miss',
           needsRetry: true,
-          teamMatch: (bestTeam.textContent || '').trim().slice(0, 80),
+          teamMatch: teamTitleText,
           expandedFolders: expanded,
           channelCandidates: chCandidates.sort((a, b) => b.score - a.score).slice(0, 10),
         };
@@ -853,7 +866,7 @@ export function clickSidebarTarget(target) {
       return {
         found: false, clicked: false, mode: 'team-channel',
         reason: 'channel-not-found-in-team',
-        teamMatch: (bestTeam.textContent || '').trim().slice(0, 80),
+        teamMatch: teamTitleText,
         expandedFolders: expanded,
         channelCandidates: chCandidates.sort((a, b) => b.score - a.score).slice(0, 10),
       };
