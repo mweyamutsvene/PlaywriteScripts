@@ -656,11 +656,15 @@ export function inspectPane() {
 // "See more" truncation buttons inside long message bodies.
 export function expandChannelReplies() {
   let clicked = 0;
-  // Most reliable: "Open N replies" button carries data-tid="response-summary-button".
-  for (const el of document.querySelectorAll('button[data-tid="response-summary-button"]')) {
-    if (el.getAttribute('aria-disabled') === 'true' || el.disabled) continue;
-    try { el.click(); clicked++; } catch {}
-  }
+  // NOTE: Do NOT click [data-tid="response-summary-button"] ("Open N replies"
+  // from ...). That button navigates to the L2 replies pane (#channel-pane-l2)
+  // and replaces the main channel view, which kills harvest for the rest of
+  // the channel. Inline replies (the last few under each post) are already
+  // visible in the runway and captured by collectPaneMessages via
+  // [data-tid="response-surface"] [data-testid="message-body-flex-wrapper"].
+  // Full replies-pane scraping should happen as a separate step that also
+  // closes the L2 pane via [data-tid="close-l2-view-button"].
+
   // See-more expanders: aria-controls targets the see-more-content-* div, and
   // the button carries data-track-module-name="seeMoreButton". Using either is
   // better than matching the literal "See more" text.
@@ -669,11 +673,8 @@ export function expandChannelReplies() {
     if (el.getAttribute('aria-expanded') === 'true') continue;
     try { el.click(); clicked++; } catch {}
   }
-  // Text-pattern fallback for locale variants and older DOM.
+  // Text-pattern fallback for "See more" only (NOT "Open N replies").
   const patterns = [
-    /^\s*(open|show|see|view)\s+\d+\s+(older\s+)?repl(y|ies)/i,
-    /^\s*\d+\s+(older\s+)?repl(y|ies)/i,
-    /hidden\s+repl(y|ies)/i,
     /^\s*see\s+more\b/i,
   ];
   const nodes = document.querySelectorAll('button, [role="button"]');
