@@ -185,7 +185,6 @@ export function collectPaneMessages() {
   };
 
   const container = getChatContainer();
-  if (!container) return { header: null, msgs: [], scroll: null, hasContainer: false, hasScroller: false };
 
   // Detect channel surface. Channels virtualize aggressively and our generic
   // chat MESSAGE_SELECTORS bank can match inner body divs multiple times for
@@ -203,8 +202,33 @@ export function collectPaneMessages() {
     const explicit = Array.from(document.querySelectorAll('[data-tid="channel-pane-runway"]'));
     runway = explicit.find((el) => el.offsetParent !== null && el.getBoundingClientRect().width > 0)
       || explicit[0]
+      || document.querySelector('[data-tid="channel-pane-viewport"]')
       || document.querySelector('[id^="channel-pane-"]:not(#channel-pane-l2):not([data-tid="channel-replies-runway"])')
       || null;
+  }
+
+  // Counts for the debug log so we can tell WHY an empty result happened
+  // (container missing? runway missing? anchors zero? all filtered as controls?).
+  const diag = {
+    isChannel,
+    hasContainer: !!container,
+    hasRunway: !!runway,
+    postAnchorCount: 0,
+    replyWrapperCount: 0,
+    channelPaneMessageCount: 0,
+    chatSelectorCount: 0,
+  };
+
+  // If we have neither a chat container nor a channel runway, there's nothing
+  // to scrape — but still report diagnostics so debug logs are useful.
+  if (!container && !runway) {
+    return {
+      header: null, msgs: [], scroll: null,
+      hasContainer: false, hasScroller: false,
+      surface: isChannel ? 'channel' : 'chat',
+      loading: false,
+      diag,
+    };
   }
 
   let messageEls;
@@ -218,13 +242,30 @@ export function collectPaneMessages() {
     const replyWrappers = Array.from(runway.querySelectorAll(
       '[data-tid="response-surface"] [data-testid="message-body-flex-wrapper"][data-mid]'
     ));
+    diag.postAnchorCount = postAnchors.length;
+    diag.replyWrapperCount = replyWrappers.length;
     messageEls = postAnchors.concat(replyWrappers);
-    // Fallback if the runway is still warming up and anchors aren't ready.
+    // Fallback 1: channel-pane-message (older/alternate layout)
     if (!messageEls.length) {
-      messageEls = Array.from(runway.querySelectorAll('[data-tid="channel-pane-message"]'));
+      const cpm = Array.from(runway.querySelectorAll('[data-tid="channel-pane-message"]'));
+      diag.channelPaneMessageCount = cpm.length;
+      messageEls = cpm;
+    }
+    // Fallback 2: any message-body flex wrappers in the runway (broader net)
+    if (!messageEls.length) {
+      messageEls = Array.from(runway.querySelectorAll(
+        '[data-testid="message-body-flex-wrapper"][data-mid], [id^="message-body-"]'
+      ));
+    }
+    // Fallback 3: document-wide if runway has drifted
+    if (!messageEls.length) {
+      messageEls = Array.from(document.querySelectorAll(
+        '[data-tid="channel-pane-message"], [data-testid="message-body-flex-wrapper"][data-mid]'
+      ));
     }
   } else {
-    messageEls = qa(MESSAGE_SELECTORS, container);
+    messageEls = qa(MESSAGE_SELECTORS, container || document);
+    diag.chatSelectorCount = messageEls.length;
   }
 
   let lastSender = 'Unknown';
@@ -392,10 +433,11 @@ export function collectPaneMessages() {
     scroll: scroller
       ? { scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight }
       : null,
-    hasContainer: true,
+    hasContainer: !!container,
     hasScroller: !!scroller,
     surface: isChannel ? 'channel' : 'chat',
     loading,
+    diag: { ...diag, messageElsCount: messageEls.length, msgsKept: msgs.length },
   };
 }
 

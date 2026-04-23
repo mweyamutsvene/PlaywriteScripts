@@ -543,7 +543,9 @@ async function harvestOpenPane(page, cutoff) {
       if (seen.has(key)) continue;
       seen.set(key, m);
     }
-    dbg(`harvest seed: ${firstSnap.msgs.length} raw, ${seen.size} unique`);
+    dbg(`harvest seed: ${firstSnap.msgs.length} raw, ${seen.size} unique, diag=${JSON.stringify(firstSnap.diag || {})}`);
+  } else {
+    dbg(`harvest seed: NO SNAPSHOT (collectPaneMessages returned null)`);
   }
 
   for (let round = 0; round < maxRounds && !reachedOlder && seen.size < MAX_MESSAGES && stagnant < maxStagnant; round++) {
@@ -561,7 +563,7 @@ async function harvestOpenPane(page, cutoff) {
       if (m.timeISO && new Date(m.timeISO) < cutoff) reachedOlder = true;
     }
     const added = seen.size - before;
-    dbg(`harvest round ${round}: raw=${snap.msgs.length}, +${added} new, total=${seen.size}, loading=${snap.loading}, stagnant=${stagnant}, scroll=${JSON.stringify(snap.scroll)}`);
+    dbg(`harvest round ${round}: raw=${snap.msgs.length}, +${added} new, total=${seen.size}, loading=${snap.loading}, stagnant=${stagnant}, scroll=${JSON.stringify(snap.scroll)}, diag=${JSON.stringify(snap.diag || {})}`);
     if (reachedOlder || seen.size >= MAX_MESSAGES) break;
 
     const mv = await page.evaluate(scrollPaneUpBy, scrollStepPx);
