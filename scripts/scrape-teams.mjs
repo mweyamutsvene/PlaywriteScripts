@@ -586,9 +586,28 @@ async function harvestOpenPane(page, cutoff) {
   }
 
   const header = (await page.evaluate(readHeader)).header;
-  const flat = [...seen.values()]
+  const all = [...seen.values()];
+  const flat = all
     .filter(m => !m.timeISO || new Date(m.timeISO) >= cutoff)
     .sort((a, b) => new Date(a.timeISO || 0) - new Date(b.timeISO || 0));
+
+  // Timestamp sanity: log the min/max/null counts across ALL captured msgs
+  // (pre-cutoff) so we can tell "nothing in window" vs "parser went wrong".
+  const withTime = all.filter(m => m.timeISO);
+  const withoutTime = all.length - withTime.length;
+  if (all.length) {
+    const times = withTime.map(m => new Date(m.timeISO).getTime()).filter(Number.isFinite);
+    const minT = times.length ? new Date(Math.min(...times)).toISOString() : 'n/a';
+    const maxT = times.length ? new Date(Math.max(...times)).toISOString() : 'n/a';
+    const sample = all.slice(0, 3).map(m => ({
+      sender: (m.sender || '').slice(0, 24),
+      timeISO: m.timeISO,
+      timeLabel: m.timeLabel,
+      text: (m.text || '').slice(0, 40),
+    }));
+    dbg(`harvest ts: withTime=${withTime.length}, withoutTime=${withoutTime}, min=${minT}, max=${maxT}, cutoff=${cutoff.toISOString()}`);
+    dbg(`harvest sample: ${JSON.stringify(sample)}`);
+  }
 
   // Nest inline channel replies under their parent post. Each reply carries a
   // parentId (= the parent post's mid) set by collectPaneMessages via the

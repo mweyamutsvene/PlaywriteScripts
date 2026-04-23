@@ -154,3 +154,4 @@ running against a full target list.
   breaks due to conditional access. Tracked as a future skill.
 - **Calendar digest** — same pattern against `outlook.office.com/calendar`.
 - **Teams unread digest** — same pattern against Teams web.
+
