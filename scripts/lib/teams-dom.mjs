@@ -157,8 +157,17 @@ export function collectPaneMessages() {
     if (!raw) return null;
     const s = String(raw).trim();
     const now = new Date();
-    const direct = new Date(s);
-    if (!isNaN(direct.getTime())) return direct;
+
+    // Fast path: full ISO / RFC 2822 from a datetime attribute.
+    // Only trust new Date() when the string starts with 4-digit year OR
+    // looks like a full ISO, because Chromium happily parses "3/30 12:19 PM"
+    // as March 30, 2001.
+    if (/^\d{4}-\d{2}-\d{2}T/.test(s) || /^\d{4}-\d{2}-\d{2}\b/.test(s)
+      || /^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/.test(s)) {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d;
+    }
+
     if (/^today/i.test(s)) {
       const t = s.replace(/today\s*,?\s*/i, '');
       const d = new Date(`${now.toDateString()} ${t}`);
@@ -170,16 +179,70 @@ export function collectPaneMessages() {
       const d = new Date(`${y.toDateString()} ${t}`);
       if (!isNaN(d.getTime())) return d;
     }
+    // Day-of-week + time, e.g. "Mon 9:41 AM"
+    const dowMatch = s.match(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*,?\s*(.+)$/i);
+    if (dowMatch) {
+      const dowMap = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+      const wantDow = dowMap[dowMatch[1].slice(0,3).toLowerCase()];
+      const t = dowMatch[2];
+      // Walk back up to 7 days to find the most recent matching DOW.
+      for (let back = 0; back < 8; back++) {
+        const cand = new Date(now); cand.setDate(cand.getDate() - back);
+        if (cand.getDay() === wantDow) {
+          const d = new Date(`${cand.toDateString()} ${t}`);
+          if (!isNaN(d.getTime())) return d;
+          break;
+        }
+      }
+    }
+    // Bare time "3:42 PM" — assume today.
     if (/^\d{1,2}:\d{2}\s*(AM|PM)?$/i.test(s)) {
       const d = new Date(`${now.toDateString()} ${s}`);
       if (!isNaN(d.getTime())) return d;
     }
+    // Full MM/DD/YYYY [time]
     const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(.*)$/);
     if (m) {
       const [, mo, da, yr, t] = m;
       const year = yr.length === 2 ? `20${yr}` : yr;
       const d = new Date(`${mo}/${da}/${year} ${t || '00:00'}`);
       if (!isNaN(d.getTime())) return d;
+    }
+    // Short form with no year: "3/30 12:19 PM" — Teams uses this for messages
+    // within the current year. Assume current year; if the resulting date is
+    // in the future by more than 1 day, roll back a year.
+    const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\s+(.+)$/);
+    if (m2) {
+      const [, mo, da, t] = m2;
+      let year = now.getFullYear();
+      let d = new Date(`${mo}/${da}/${year} ${t}`);
+      if (!isNaN(d.getTime())) {
+        // More than 24h in the future → must be from last year.
+        if (d.getTime() - now.getTime() > 24 * 3600 * 1000) {
+          d = new Date(`${mo}/${da}/${year - 1} ${t}`);
+        }
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+    // Bare "3/30" — assume noon so we can still filter by day.
+    const m3 = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (m3) {
+      const [, mo, da] = m3;
+      let year = now.getFullYear();
+      let d = new Date(`${mo}/${da}/${year} 12:00`);
+      if (!isNaN(d.getTime())) {
+        if (d.getTime() - now.getTime() > 24 * 3600 * 1000) {
+          d = new Date(`${mo}/${da}/${year - 1} 12:00`);
+        }
+        return d;
+      }
+    }
+    // Last-resort: trust Date parser for things like long English dates
+    // ("April 15, 2026, 3:42 PM"). Keep this AFTER the short forms so it
+    // can't turn "3/30 12:19 PM" into the year 2001.
+    const fallback = new Date(s);
+    if (!isNaN(fallback.getTime()) && fallback.getFullYear() >= now.getFullYear() - 1) {
+      return fallback;
     }
     return null;
   };
@@ -332,14 +395,25 @@ export function collectPaneMessages() {
     }
 
     let timeStr = '';
-    for (const sel of TIMESTAMP_SELECTORS) {
-      try {
-        const found = item.querySelector(sel);
-        if (found) {
-          timeStr = found.getAttribute('datetime') || found.getAttribute('title') || found.textContent?.trim() || '';
-          if (timeStr) break;
-        }
-      } catch {}
+    // Prefer any descendant <time datetime="..."> — it's the canonical ISO
+    // timestamp Teams emits for accessibility. Also check title attributes
+    // on timestamp-shaped elements (full tooltip date).
+    const timeEl = item.querySelector('time[datetime]');
+    if (timeEl) timeStr = timeEl.getAttribute('datetime') || '';
+    if (!timeStr) {
+      const titled = item.querySelector('[data-tid^="timestamp-"][title], [data-tid="messageTimeStamp"][title], [class*="timestamp"][title], [class*="Timestamp"][title]');
+      if (titled) timeStr = titled.getAttribute('title') || '';
+    }
+    if (!timeStr) {
+      for (const sel of TIMESTAMP_SELECTORS) {
+        try {
+          const found = item.querySelector(sel);
+          if (found) {
+            timeStr = found.getAttribute('datetime') || found.getAttribute('title') || found.textContent?.trim() || '';
+            if (timeStr) break;
+          }
+        } catch {}
+      }
     }
     if (!timeStr) {
       for (const span of item.querySelectorAll('span, div, time')) {
