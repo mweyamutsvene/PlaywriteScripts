@@ -918,10 +918,10 @@ export function clickSidebarTarget(target) {
       }
     }
 
-    // Click "See all channels" if the team is showing a truncated list. This
-    // is a no-op if already expanded; the retry from the caller picks up the
-    // newly rendered treeitems.
-    const seeAllClicked = (() => {
+    // Click "See all channels" as a LAST RESORT when we can't find the target
+    // — it sometimes navigates away from the sidebar or opens a discovery
+    // dialog, so we only want to fire it on a genuine miss.
+    const clickSeeAll = () => {
       const group = teamGroup || findGroupForTeam();
       const btn = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]')
         || bestTeam.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]');
@@ -929,7 +929,7 @@ export function clickSidebarTarget(target) {
         try { btn.click(); return true; } catch {}
       }
       return false;
-    })();
+    };
 
     const teamTitleText = (
       bestTeam.querySelector('[id^="title-team-list-item-"]')?.textContent
@@ -937,14 +937,38 @@ export function clickSidebarTarget(target) {
       || ''
     ).trim().slice(0, 80);
 
-    // If we just expanded the team OR just clicked "see all", channel items
-    // may not be in the DOM yet. Bail with needsRetry so the caller re-runs
-    // after a short wait.
-    if (wasCollapsed || seeAllClicked || channelItems.length === 0) {
+    // If we just expanded the team, give the DOM a tick to render the
+    // channels, then retry. Don't touch See-all yet.
+    if (wasCollapsed && channelItems.length === 0) {
       return {
         found: false, clicked: false, mode: 'team-channel',
-        reason: wasCollapsed ? 'team-just-expanded' : seeAllClicked ? 'see-all-just-clicked' : 'no-channels-rendered',
-        needsRetry: wasCollapsed || seeAllClicked,
+        reason: 'team-just-expanded',
+        needsRetry: true,
+        teamMatch: teamTitleText,
+        teamScore: bestTeamScore,
+        channelItemsFound: 0,
+        expandedFolders: expanded,
+      };
+    }
+
+    // Filter out non-channel treeitems (e.g. "See all channels", "Channels"
+    // nav nodes) that may carry data-item-type="channel" but aren't actual
+    // channels we want to navigate to.
+    const realChannelItems = channelItems.filter((ci) => {
+      const testid = ci.getAttribute('data-testid') || '';
+      if (/see-all-channel|seeall|see-all/i.test(testid)) return false;
+      // Real channels have a title element with id starting "title-channel-list-item-".
+      if (!ci.querySelector('[id^="title-channel-list-item-"]')) return false;
+      return true;
+    });
+
+    if (realChannelItems.length === 0) {
+      // None rendered at all — try See-all once to unhide them.
+      const clickedSeeAll = clickSeeAll();
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: clickedSeeAll ? 'see-all-clicked-no-channels' : 'no-channels-rendered',
+        needsRetry: clickedSeeAll,
         teamMatch: teamTitleText,
         teamScore: bestTeamScore,
         channelItemsFound: channelItems.length,
@@ -955,7 +979,7 @@ export function clickSidebarTarget(target) {
     let bestCh = null;
     let bestChScore = 0;
     const chCandidates = [];
-    for (const ci of channelItems) {
+    for (const ci of realChannelItems) {
       const titleEl = ci.querySelector('[id^="title-channel-list-item-"]')
         || ci.querySelector('[class*="channel-type-name"]')
         || ci.querySelector('span');
@@ -965,12 +989,10 @@ export function clickSidebarTarget(target) {
       if (s > bestChScore) { bestChScore = s; bestCh = ci; }
     }
     if (!bestCh || bestChScore < 25) {
-      // Maybe hidden behind "See all channels" — signal retry so caller clicks
-      // and re-queries.
-      const group = teamGroup || findGroupForTeam();
-      const seeAll = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]');
-      if (seeAll) {
-        try { seeAll.click(); } catch {}
+      // Maybe hidden behind "See all channels" — click it once as recovery,
+      // then let the caller retry.
+      const clickedSeeAll = clickSeeAll();
+      if (clickedSeeAll) {
         return {
           found: false, clicked: false, mode: 'team-channel',
           reason: 'see-all-clicked-on-miss',
