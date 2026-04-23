@@ -350,9 +350,17 @@ async function gotoTarget(page, target) {
   // virtualized items.
   const sidebarSpec = { name: spec.name, team: spec.team, channel: spec.channel };
   let sidebar = null;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     sidebar = await page.evaluate(clickSidebarTarget, sidebarSpec).catch((e) => ({ error: String(e) }));
     if (sidebar?.clicked) break;
+    // Team found but channel list not rendered yet (we just expanded the team
+    // or clicked "See all channels"). Wait for render, then retry without
+    // scrolling — the team is already visible.
+    if (sidebar?.needsRetry) {
+      dbg(`gotoTarget: sidebar retry needed (reason=${sidebar.reason}, team="${sidebar.teamMatch}")`);
+      await page.waitForTimeout(700);
+      continue;
+    }
     // No match yet — scroll the rail and retry.
     const mv = await page.evaluate(scrollSidebarTree, 700).catch(() => null);
     dbg(`gotoTarget: sidebar miss on attempt ${attempt}, scroll=${mv ? JSON.stringify({ before: mv.before, after: mv.after, atBottom: mv.atBottom }) : 'n/a'}`);

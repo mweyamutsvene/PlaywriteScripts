@@ -677,8 +677,21 @@ export function clickSidebarTarget(target) {
     if (!t || !n) return 0;
     if (t === n) return 100;
     if (t.startsWith(n)) return 80;
-    const words = n.split(/\s+/).filter(Boolean);
-    if (words.length > 1 && words.every((w) => t.includes(w))) return 50 + Math.min(20, words.length * 5);
+    if (n.startsWith(t) && t.length >= 6) return 75; // DOM title truncated to a prefix of the needle
+    const tWords = t.split(/\s+/).filter(Boolean);
+    const nWords = n.split(/\s+/).filter(Boolean);
+    if (nWords.length > 1) {
+      // Token-prefix match: every needle word is a prefix of some title word.
+      // Handles DOM labels that truncate ("FTAuthentication Mobile Authent…").
+      const allPrefixed = nWords.every((nw) =>
+        tWords.some((tw) => tw.startsWith(nw) || nw.startsWith(tw)));
+      if (allPrefixed) return 60 + Math.min(20, nWords.length * 4);
+      // Every needle word appears (substring) in title
+      if (nWords.every((w) => t.includes(w))) return 50 + Math.min(20, nWords.length * 5);
+      // Majority of needle words match
+      const hits = nWords.filter((w) => t.includes(w)).length;
+      if (hits >= Math.ceil(nWords.length * 0.7)) return 30 + hits * 3;
+    }
     if (t.includes(n)) return 40;
     // fuzzy fallback: close enough for typos
     const sim = similarity(t, n);
@@ -739,7 +752,8 @@ export function clickSidebarTarget(target) {
       };
     }
     // Expand the team if collapsed.
-    if (bestTeam.getAttribute('aria-expanded') === 'false') {
+    const wasCollapsed = bestTeam.getAttribute('aria-expanded') === 'false';
+    if (wasCollapsed) {
       const header = bestTeam.querySelector('[data-testid^="list-item-teams-and-channels"]') || bestTeam;
       try { header.click(); expanded++; } catch {}
     }
@@ -753,6 +767,16 @@ export function clickSidebarTarget(target) {
     const teamIdMatch = teamValue.match(/19:[0-9a-f]+@thread\.(?:tacv2|skype)/i);
     const teamThreadId = teamIdMatch ? teamIdMatch[0] : null;
 
+    const findGroupForTeam = () => {
+      let g = null;
+      let sib = bestTeam.nextElementSibling;
+      while (sib && !g) {
+        if (sib.matches?.('[role="group"]')) g = sib;
+        sib = sib.nextElementSibling;
+      }
+      return g;
+    };
+
     let channelItems = [];
     if (teamThreadId) {
       channelItems = [...document.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
@@ -763,17 +787,41 @@ export function clickSidebarTarget(target) {
         });
     }
     // Fallback: positional (legacy behavior) if thread-ID pairing found nothing.
+    let teamGroup = null;
     if (channelItems.length === 0) {
-      let group = null;
-      let sib = bestTeam.nextElementSibling;
-      while (sib && !group) {
-        if (sib.matches?.('[role="group"]')) group = sib;
-        sib = sib.nextElementSibling;
-      }
-      channelItems = group
-        ? [...group.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+      teamGroup = findGroupForTeam();
+      channelItems = teamGroup
+        ? [...teamGroup.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
         : [];
     }
+
+    // Click "See all channels" if the team is showing a truncated list. This
+    // is a no-op if already expanded; the retry from the caller picks up the
+    // newly rendered treeitems.
+    const seeAllClicked = (() => {
+      const group = teamGroup || findGroupForTeam();
+      const btn = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]')
+        || bestTeam.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]');
+      if (btn) {
+        try { btn.click(); return true; } catch {}
+      }
+      return false;
+    })();
+
+    // If we just expanded the team OR just clicked "see all", channel items
+    // may not be in the DOM yet. Bail with needsRetry so the caller re-runs
+    // after a short wait.
+    if (wasCollapsed || seeAllClicked || channelItems.length === 0) {
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: wasCollapsed ? 'team-just-expanded' : seeAllClicked ? 'see-all-just-clicked' : 'no-channels-rendered',
+        needsRetry: true,
+        teamMatch: (bestTeam.textContent || '').trim().slice(0, 80),
+        teamScore: bestTeamScore,
+        expandedFolders: expanded,
+      };
+    }
+
     let bestCh = null;
     let bestChScore = 0;
     const chCandidates = [];
@@ -786,11 +834,21 @@ export function clickSidebarTarget(target) {
       chCandidates.push({ text: txt.trim().slice(0, 80), score: s });
       if (s > bestChScore) { bestChScore = s; bestCh = ci; }
     }
-    if (!bestCh || bestChScore < 40) {
-      // "See all channels" may hide it — try clicking that and re-query once.
-      const seeAll = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"]');
+    if (!bestCh || bestChScore < 25) {
+      // Maybe hidden behind "See all channels" — signal retry so caller clicks
+      // and re-queries.
+      const group = teamGroup || findGroupForTeam();
+      const seeAll = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]');
       if (seeAll) {
         try { seeAll.click(); } catch {}
+        return {
+          found: false, clicked: false, mode: 'team-channel',
+          reason: 'see-all-clicked-on-miss',
+          needsRetry: true,
+          teamMatch: (bestTeam.textContent || '').trim().slice(0, 80),
+          expandedFolders: expanded,
+          channelCandidates: chCandidates.sort((a, b) => b.score - a.score).slice(0, 10),
+        };
       }
       return {
         found: false, clicked: false, mode: 'team-channel',
