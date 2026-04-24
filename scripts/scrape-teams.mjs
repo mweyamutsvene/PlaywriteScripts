@@ -11,6 +11,11 @@
 //   node scripts/scrape-teams.mjs --targets teams-targets.json --days 3
 //   node scripts/scrape-teams.mjs --names "Standup,Platform Eng General" --days 1
 //   node scripts/scrape-teams.mjs --inspect
+//   node scripts/scrape-teams.mjs --login    # open Teams and wait; useful when
+//                                            # tenant shows a "Login needed"
+//                                            # banner that takes minutes to
+//                                            # appear. Exit with Ctrl+C or by
+//                                            # closing the window.
 
 import { chromium } from 'playwright';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
@@ -41,6 +46,7 @@ const SINCE = args.since ? new Date(args.since) : null;
 const MAX_MESSAGES = args.max ? Number(args.max) : 200;
 const HEADFUL = args.headful ?? true;
 const INSPECT = !!args.inspect;
+const LOGIN_ONLY = !!args.login;
 const DEBUG = !!args.debug || !!process.env.TEAMS_DEBUG;
 const PANE_SETTLE_MS = 900;
 const MAX_SCROLL_ROUNDS = 40;
@@ -119,6 +125,7 @@ function normalizeTarget(t) {
   console.log(`  max msgs    ${MAX_MESSAGES}`);
   console.log(`  headful     ${HEADFUL}`);
   console.log(`  inspect     ${INSPECT}`);
+  console.log(`  login-only  ${LOGIN_ONLY}`);
   console.log(`  debug       ${DEBUG}`);
   console.log('====================');
 
@@ -172,6 +179,20 @@ function normalizeTarget(t) {
   console.log(`→ Navigating to ${TEAMS_URL}`);
   await page.goto(TEAMS_URL, { waitUntil: 'domcontentloaded' });
   dbg('post-goto url =', page.url());
+
+  if (LOGIN_ONLY) {
+    console.log('→ --login mode: browser is open. Sign in / complete MFA / clear any');
+    console.log('  "Login needed" banners as they appear. Session will be saved to');
+    console.log(`  ${AUTH_DIR} on exit.`);
+    console.log('  Press Ctrl+C (or close the browser window) when done.');
+    // Exit cleanly when the user closes the window so the profile is flushed.
+    await new Promise((resolve) => {
+      context.on('close', () => resolve());
+      page.on('close', () => resolve());
+      // SIGINT is handled by gracefulClose above.
+    });
+    return;
+  }
 
   console.log('→ Waiting for Teams shell (up to 5 minutes; sign in if prompted)...');
 

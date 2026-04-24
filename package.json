@@ -7,6 +7,7 @@
   "scripts": {
     "scrape:outlook": "node scripts/scrape-outlook.mjs",
     "scrape:teams": "node scripts/scrape-teams.mjs",
+    "teams:login": "node scripts/scrape-teams.mjs --login",
     "postinstall": "playwright install chromium"
   },
   "devDependencies": {
