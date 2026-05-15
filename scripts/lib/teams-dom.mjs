@@ -1,0 +1,1125 @@
+// DOM helpers for enterprise Microsoft Teams (teams.microsoft.com/v2).
+//
+// Each exported function is fully self-contained: selector banks + helpers are
+// inlined inside each function body. Reason: Playwright's `page.evaluate(fn)`
+// serializes only that one function's source, so module-scope constants and
+// helper functions are NOT available in the browser context.
+
+export function readHeader() {
+  const hEl = document.querySelector(
+    '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [data-tid="channelTitle-text"], [data-tid="channel-header"] h1, [data-tid="channel-header"] h2, [role="banner"] h1, [role="main"] h1, [role="main"] h2'
+  );
+  return { header: hEl?.textContent?.trim() || null, title: document.title };
+}
+
+export function collectPaneMessages() {
+  const CHAT_CONTAINER_SELECTORS = [
+    '.fui-Chat',
+    '[class*="fui-Chat"]',
+    '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list-viewport"]',
+    '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]',
+    '[id="channel-pane"]',
+    '[data-tid="threadBodyList"]',
+    '.ts-message-list-container',
+    '[data-tid="chat-pane"]',
+    '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]',
+    '.message-list',
+    '[class*="message-list"]',
+    '[class*="MessageList"]',
+    '[data-tid="messageListContainer"]',
+    '[role="log"]',
+  ];
+  const MESSAGE_SELECTORS = [
+    '[data-tid="chat-pane-item"]',
+    '[data-tid="message-pane-item"]',
+    '[data-tid="channel-pane-message"]',
+    '[data-tid="chat-pane-message"]',
+    '[data-tid="channel-replies-pane-message"]',
+    '[data-testid="message-body-flex-wrapper"]',
+    '[id^="post-message-renderer-"]',
+    '[id^="reply-message-renderer-"]',
+    '[id^="message-body-"][aria-labelledby]',
+    '[id^="message-body-"]',
+    '[data-testid="message-wrapper"]',
+    '[class*="fui-unstable-ChatItem"]',
+    '[data-tid="messageWrapper"]',
+    '.message-body-container',
+    '[class*="message-item"]',
+    '[role="listitem"]',
+  ];
+  const TIMESTAMP_SELECTORS = [
+    '[class*="fui-ChatMessage__timestamp"]',
+    '[class*="fui-ChatMyMessage__timestamp"]',
+    '[class*="__timestamp"]',
+    '[data-tid="messageTimeStamp"]',
+    'time[datetime]',
+    'time',
+    '[class*="timestamp"]',
+    '[class*="Timestamp"]',
+    '[class*="time-stamp"]',
+    '[datetime]',
+    '[data-tid^="timestamp-"]',
+  ];
+  const SENDER_SELECTORS = [
+    '[class*="fui-ChatMessage__author"]',
+    '[class*="fui-ChatMyMessage__author"]',
+    '[class*="__author"]',
+    '[data-tid="message-author-name"]',
+    '.ui-chat__message__author',
+    '[class*="author"]',
+    '[class*="Author"]',
+    '[class*="sender"]',
+    '[class*="Sender"]',
+    '[class*="displayName"]',
+    '[class*="DisplayName"]',
+    '[data-tid^="author-"]',
+  ];
+  const MESSAGE_TEXT_SELECTORS = [
+    '[data-tid="message-body"][data-message-content]',
+    '[id^="content-"][data-message-content]',
+    '[class*="fui-ChatMessage__body"]',
+    '[class*="fui-ChatMyMessage__body"]',
+    '[class*="__body"]',
+    '.fui-ChatMessage',
+    '.fui-ChatMyMessage',
+    '.ui-chat__message__content',
+    '.message-body-content',
+    '[class*="messageContent"]',
+    '[class*="MessageContent"]',
+    '[class*="message-body"]',
+    '[data-tid="messageBodyContent"]',
+    '[data-tid="message-body-content"]',
+    '[data-tid="message-body"]',
+  ];
+
+  const q = (selectors, parent) => {
+    const root = parent || document;
+    for (const sel of selectors) {
+      try { const el = root.querySelector(sel); if (el) return el; } catch {}
+    }
+    return null;
+  };
+  const qa = (selectors, parent) => {
+    const root = parent || document;
+    for (const sel of selectors) {
+      try { const els = root.querySelectorAll(sel); if (els.length) return [...els]; } catch {}
+    }
+    return [];
+  };
+  const getChatContainer = () => {
+    for (const sel of CHAT_CONTAINER_SELECTORS) {
+      try {
+        for (const el of document.querySelectorAll(sel)) {
+          if ((el.textContent || '').trim().length > 80 && el.children.length > 0) return el;
+        }
+      } catch {}
+    }
+    const probes = document.querySelectorAll(
+      '[role="main"], [role="log"], [role="list"], [data-tid="chat"], [class*="chat"], [class*="Chat"], [class*="message-list"]'
+    );
+    for (const el of probes) {
+      if (el.children.length >= 3 && (el.textContent || '').length > 200) return el;
+    }
+    return null;
+  };
+  const getScrollableContainer = () => {
+    const chat = getChatContainer();
+    if (chat) {
+      if (chat.scrollHeight > chat.clientHeight + 10) return chat;
+      let p = chat.parentElement;
+      while (p) {
+        const cs = getComputedStyle(p);
+        if ((cs.overflowY === 'auto' || cs.overflowY === 'scroll') && p.scrollHeight > p.clientHeight + 10) return p;
+        p = p.parentElement;
+      }
+      const child = chat.querySelector('[style*="overflow"], [data-is-scrollable="true"]');
+      if (child && child.scrollHeight > child.clientHeight + 10) return child;
+    }
+    const all = document.querySelectorAll('[role="main"] *, [class*="chat"] *, [class*="Chat"] *');
+    let best = null;
+    for (const el of all) {
+      if (el.scrollHeight > el.clientHeight + 100) {
+        const cs = getComputedStyle(el);
+        if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') {
+          if (!best || el.scrollHeight > best.scrollHeight) best = el;
+        }
+      }
+    }
+    return best || chat;
+  };
+  const parseTimestamp = (raw) => {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    const now = new Date();
+
+    // Fast path: full ISO / RFC 2822 from a datetime attribute.
+    // Only trust new Date() when the string starts with 4-digit year OR
+    // looks like a full ISO, because Chromium happily parses "3/30 12:19 PM"
+    // as March 30, 2001.
+    if (/^\d{4}-\d{2}-\d{2}T/.test(s) || /^\d{4}-\d{2}-\d{2}\b/.test(s)
+      || /^[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}/.test(s)) {
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d;
+    }
+
+    if (/^today/i.test(s)) {
+      const t = s.replace(/today\s*,?\s*/i, '');
+      const d = new Date(`${now.toDateString()} ${t}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    if (/^yesterday/i.test(s)) {
+      const t = s.replace(/yesterday\s*,?\s*/i, '');
+      const y = new Date(now); y.setDate(y.getDate() - 1);
+      const d = new Date(`${y.toDateString()} ${t}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    // Day-of-week + time, e.g. "Mon 9:41 AM"
+    const dowMatch = s.match(/^(mon|tue|wed|thu|fri|sat|sun)[a-z]*\s*,?\s*(.+)$/i);
+    if (dowMatch) {
+      const dowMap = { sun:0, mon:1, tue:2, wed:3, thu:4, fri:5, sat:6 };
+      const wantDow = dowMap[dowMatch[1].slice(0,3).toLowerCase()];
+      const t = dowMatch[2];
+      // Walk back up to 7 days to find the most recent matching DOW.
+      for (let back = 0; back < 8; back++) {
+        const cand = new Date(now); cand.setDate(cand.getDate() - back);
+        if (cand.getDay() === wantDow) {
+          const d = new Date(`${cand.toDateString()} ${t}`);
+          if (!isNaN(d.getTime())) return d;
+          break;
+        }
+      }
+    }
+    // Bare time "3:42 PM" — assume today.
+    if (/^\d{1,2}:\d{2}\s*(AM|PM)?$/i.test(s)) {
+      const d = new Date(`${now.toDateString()} ${s}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    // Full MM/DD/YYYY [time]
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\s*(.*)$/);
+    if (m) {
+      const [, mo, da, yr, t] = m;
+      const year = yr.length === 2 ? `20${yr}` : yr;
+      const d = new Date(`${mo}/${da}/${year} ${t || '00:00'}`);
+      if (!isNaN(d.getTime())) return d;
+    }
+    // Short form with no year: "3/30 12:19 PM" — Teams uses this for messages
+    // within the current year. Assume current year; if the resulting date is
+    // in the future by more than 1 day, roll back a year.
+    const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\s+(.+)$/);
+    if (m2) {
+      const [, mo, da, t] = m2;
+      let year = now.getFullYear();
+      let d = new Date(`${mo}/${da}/${year} ${t}`);
+      if (!isNaN(d.getTime())) {
+        // More than 24h in the future → must be from last year.
+        if (d.getTime() - now.getTime() > 24 * 3600 * 1000) {
+          d = new Date(`${mo}/${da}/${year - 1} ${t}`);
+        }
+        if (!isNaN(d.getTime())) return d;
+      }
+    }
+    // Bare "3/30" — assume noon so we can still filter by day.
+    const m3 = s.match(/^(\d{1,2})\/(\d{1,2})$/);
+    if (m3) {
+      const [, mo, da] = m3;
+      let year = now.getFullYear();
+      let d = new Date(`${mo}/${da}/${year} 12:00`);
+      if (!isNaN(d.getTime())) {
+        if (d.getTime() - now.getTime() > 24 * 3600 * 1000) {
+          d = new Date(`${mo}/${da}/${year - 1} 12:00`);
+        }
+        return d;
+      }
+    }
+    // Last-resort: trust Date parser for things like long English dates
+    // ("April 15, 2026, 3:42 PM"). Keep this AFTER the short forms so it
+    // can't turn "3/30 12:19 PM" into the year 2001.
+    const fallback = new Date(s);
+    if (!isNaN(fallback.getTime()) && fallback.getFullYear() >= now.getFullYear() - 1) {
+      return fallback;
+    }
+    return null;
+  };
+
+  const container = getChatContainer();
+
+  // Detect channel surface. Channels virtualize aggressively and our generic
+  // chat MESSAGE_SELECTORS bank can match inner body divs multiple times for
+  // the same post, so when we're on a channel we use a dedicated per-post
+  // anchor (gediz/teams-web-chat-exporter's approach): scope to the channel
+  // runway and enumerate each post via [id^="message-body-"][aria-labelledby]
+  // plus control-message-renderer for system posts. Inline replies live
+  // inside each post under [data-tid="response-surface"] and are picked up
+  // via their own [data-testid="message-body-flex-wrapper"][data-mid].
+  const isChannel = !!document.querySelector(
+    '[data-tid="channel-pane-runway"], [data-tid="channel-pane-viewport"], [data-tid="channel-pane-message"]'
+  );
+  let runway = null;
+  if (isChannel) {
+    const explicit = Array.from(document.querySelectorAll('[data-tid="channel-pane-runway"]'));
+    runway = explicit.find((el) => el.offsetParent !== null && el.getBoundingClientRect().width > 0)
+      || explicit[0]
+      || document.querySelector('[data-tid="channel-pane-viewport"]')
+      || document.querySelector('[id^="channel-pane-"]:not(#channel-pane-l2):not([data-tid="channel-replies-runway"])')
+      || null;
+  }
+
+  // Counts for the debug log so we can tell WHY an empty result happened
+  // (container missing? runway missing? anchors zero? all filtered as controls?).
+  const diag = {
+    isChannel,
+    hasContainer: !!container,
+    hasRunway: !!runway,
+    postAnchorCount: 0,
+    replyWrapperCount: 0,
+    channelPaneMessageCount: 0,
+    chatSelectorCount: 0,
+  };
+
+  // If we have neither a chat container nor a channel runway, there's nothing
+  // to scrape — but still report diagnostics so debug logs are useful.
+  if (!container && !runway) {
+    return {
+      header: null, msgs: [], scroll: null,
+      hasContainer: false, hasScroller: false,
+      surface: isChannel ? 'channel' : 'chat',
+      loading: false,
+      diag,
+    };
+  }
+
+  let messageEls;
+  if (isChannel && runway) {
+    // Primary: direct per-post anchors inside the runway.
+    const postAnchors = Array.from(runway.querySelectorAll(
+      '[id^="message-body-"][aria-labelledby], [data-tid="control-message-renderer"]'
+    ));
+    // Also include each inline reply's own flex-wrapper so replies get their
+    // own extraction (not absorbed into the parent post).
+    const replyWrappers = Array.from(runway.querySelectorAll(
+      '[data-tid="response-surface"] [data-testid="message-body-flex-wrapper"][data-mid]'
+    ));
+    diag.postAnchorCount = postAnchors.length;
+    diag.replyWrapperCount = replyWrappers.length;
+    messageEls = postAnchors.concat(replyWrappers);
+    // Fallback 1: channel-pane-message (older/alternate layout)
+    if (!messageEls.length) {
+      const cpm = Array.from(runway.querySelectorAll('[data-tid="channel-pane-message"]'));
+      diag.channelPaneMessageCount = cpm.length;
+      messageEls = cpm;
+    }
+    // Fallback 2: any message-body flex wrappers in the runway (broader net)
+    if (!messageEls.length) {
+      messageEls = Array.from(runway.querySelectorAll(
+        '[data-testid="message-body-flex-wrapper"][data-mid], [id^="message-body-"]'
+      ));
+    }
+    // Fallback 3: document-wide if runway has drifted
+    if (!messageEls.length) {
+      messageEls = Array.from(document.querySelectorAll(
+        '[data-tid="channel-pane-message"], [data-testid="message-body-flex-wrapper"][data-mid]'
+      ));
+    }
+  } else {
+    messageEls = qa(MESSAGE_SELECTORS, container || document);
+    diag.chatSelectorCount = messageEls.length;
+  }
+
+  let lastSender = 'Unknown';
+  let lastTime = null;
+  let lastTimeStr = '';
+  const msgs = [];
+  const seenMids = new Set();
+
+  messageEls.forEach((el, idx) => {
+    // Skip virtualization placeholders/loaders — they're empty shimmer divs.
+    if (el.matches?.('[data-testid="virtual-list-loader"], [data-testid="vl-placeholders"], [data-testid="vl-buffer"]')) return;
+    if (el.closest?.('[data-testid="vl-placeholders"], [data-testid="vl-buffer"]')) return;
+
+    // Per-message extraction scope. In a channel, [data-tid="channel-pane-message"]
+    // (the outer post) *contains* inline reply wrappers inside its
+    // [data-tid="response-surface"] — so if we used that as the scope for all of
+    // them, every reply would extract the parent post's sender/body/timestamp.
+    // Each post AND each inline reply has its own [id^="message-body-"][role="group"]
+    // container (scoping author/timestamp/body), and its own
+    // [data-testid="message-body-flex-wrapper"][data-mid] (stable id). Prefer the
+    // group, fall back to the flex-wrapper, fall back to the legacy chain.
+    const flexWrapper = el.matches?.('[data-testid="message-body-flex-wrapper"]')
+      ? el
+      : (el.closest?.('[data-testid="message-body-flex-wrapper"]')
+        || el.querySelector?.('[data-testid="message-body-flex-wrapper"][data-mid]')
+        || null);
+    const bodyGroup = el.matches?.('[id^="message-body-"][role="group"]')
+      ? el
+      : (el.closest?.('[id^="message-body-"][role="group"]')
+        || flexWrapper?.closest?.('[id^="message-body-"][role="group"]')
+        || null);
+    const item = bodyGroup
+      || flexWrapper
+      || el.closest('[data-tid="channel-replies-pane-message"]')
+      || el.closest('[data-tid="channel-pane-message"]')
+      || el.closest('[data-tid="chat-pane-item"]')
+      || el.closest('[data-tid="chat-pane-message"]')
+      || el.closest('[data-tid="message-pane-item"]')
+      || el.closest('[id^="post-message-renderer-"]')
+      || el.closest('[id^="reply-message-renderer-"]')
+      || el;
+
+    if (item.querySelector('[class*="fui-Divider"]')
+      || /fui-Divider/.test(String(item.className || ''))) return;
+
+    const classStr = String(item.className || '');
+    const isControl = !!(item.querySelector('[class*="ChatControlMessage"]')
+      || item.querySelector('[class*="ControlMessage"]')
+      || /ChatControlMessage|ControlMessage/.test(classStr));
+
+    if (isControl) {
+      const controlEl = item.querySelector('[class*="ChatControlMessage"] [role="heading"]')
+        || item.querySelector('[class*="ControlMessage"]') || item;
+      const text = controlEl.textContent?.trim() || '';
+      if (text) {
+        msgs.push({
+          isSystemMessage: true, sender: '[System]',
+          text: text.slice(0, 2000),
+          timeISO: lastTime ? lastTime.toISOString() : null,
+          timeLabel: lastTimeStr || 'Chat start',
+        });
+      }
+      return;
+    }
+
+    let timeStr = '';
+    // Prefer any descendant <time datetime="..."> — it's the canonical ISO
+    // timestamp Teams emits for accessibility. Also check title attributes
+    // on timestamp-shaped elements (full tooltip date).
+    const timeEl = item.querySelector('time[datetime]');
+    if (timeEl) timeStr = timeEl.getAttribute('datetime') || '';
+    if (!timeStr) {
+      const titled = item.querySelector('[data-tid^="timestamp-"][title], [data-tid="messageTimeStamp"][title], [class*="timestamp"][title], [class*="Timestamp"][title]');
+      if (titled) timeStr = titled.getAttribute('title') || '';
+    }
+    if (!timeStr) {
+      for (const sel of TIMESTAMP_SELECTORS) {
+        try {
+          const found = item.querySelector(sel);
+          if (found) {
+            timeStr = found.getAttribute('datetime') || found.getAttribute('title') || found.textContent?.trim() || '';
+            if (timeStr) break;
+          }
+        } catch {}
+      }
+    }
+    if (!timeStr) {
+      for (const span of item.querySelectorAll('span, div, time')) {
+        const t = span.textContent?.trim() || '';
+        if (/^\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}\s*(AM|PM)/i.test(t)
+          || /^\d{1,2}:\d{2}\s*(AM|PM)/i.test(t)) { timeStr = t; break; }
+      }
+    }
+    const parsedTime = parseTimestamp(timeStr);
+    if (parsedTime) { lastTime = parsedTime; lastTimeStr = timeStr; }
+
+    let sender = '';
+    const senderEl = q(SENDER_SELECTORS, item);
+    if (senderEl) sender = senderEl.textContent?.trim() || '';
+    if (!sender) {
+      for (const span of item.querySelectorAll('span, div')) {
+        const t = span.textContent?.trim() || '';
+        if (/^[A-Z][a-z]+,\s*[A-Z][a-z]+(\s*\([A-Z]+\))?$/.test(t)) { sender = t; break; }
+      }
+    }
+    if (sender) lastSender = sender;
+
+    // Channel posts have a subject line separate from the body. Prefer the
+    // stable data-tid over the id^= form (the id carries the post mid suffix,
+    // but data-tid is the semantic attribute Teams itself keys off).
+    const subjectEl = item.querySelector('[data-tid="subject-line"]')
+      || item.querySelector('h2[data-tid="subject-line"]')
+      || item.querySelector('[id^="subject-line-"]');
+    const subject = subjectEl?.textContent?.trim() || '';
+
+    let text = '';
+    const bodyEl = q(MESSAGE_TEXT_SELECTORS, item);
+    if (bodyEl) text = bodyEl.textContent?.trim() || '';
+    if (!text) text = el.textContent?.trim() || '';
+    if (subject && text && !text.startsWith(subject)) text = `${subject}\n\n${text}`;
+    else if (subject && !text) text = subject;
+    if (text && sender) {
+      const esc = sender.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      text = text.replace(new RegExp(`^.*?by\\s+${esc}`, 'i'), '').trim();
+      text = text.replace(new RegExp(`^${esc}`), '').trim();
+    }
+    if (text && timeStr) text = text.replace(timeStr, '').trim();
+    if (!text) return;
+
+    // Stable message id from Teams — useful for dedupe across harvest rounds
+    // and for linking inline thread replies to their parent post.
+    // Teams sets data-mid = this message's id and data-reply-chain-id =
+    // the thread-root id. For the top-level post they're equal; for inline
+    // replies, chainId points to the parent post's mid.
+    const mid = flexWrapper?.getAttribute?.('data-mid')
+      || item.querySelector('[data-testid="message-body-flex-wrapper"][data-mid]')?.getAttribute('data-mid')
+      || item.querySelector('[data-mid]')?.getAttribute('data-mid')
+      || item.getAttribute?.('data-mid')
+      || null;
+    const chainId = flexWrapper?.getAttribute?.('data-reply-chain-id')
+      || item.querySelector('[data-reply-chain-id]')?.getAttribute('data-reply-chain-id')
+      || item.getAttribute?.('data-reply-chain-id')
+      || null;
+    const isReply = !!(chainId && mid && chainId !== mid);
+    const parentId = isReply ? chainId : null;
+
+    // Dedupe on mid when available.
+    if (mid && seenMids.has(mid)) return;
+    if (mid) seenMids.add(mid);
+
+    msgs.push({
+      isSystemMessage: false,
+      sender: sender || lastSender,
+      text: text.slice(0, 5000),
+      timeISO: (parsedTime || lastTime)?.toISOString() || null,
+      timeLabel: timeStr || lastTimeStr || null,
+      mid,
+      chainId,
+      parentId,
+      isReply,
+    });
+  });
+
+  const scroller = getScrollableContainer();
+  const hEl = document.querySelector(
+    '[data-tid="chat-header-title"], [data-tid="chat-title"], [data-tid="channel-header-title"], [role="banner"] h1, [role="main"] h1, [role="main"] h2'
+  );
+  // Signal virtualization activity so the harvest loop can avoid counting
+  // stagnation while Teams is still fetching older posts.
+  const loader = document.querySelector('[data-testid="virtual-list-loader"]');
+  const loading = !!(loader && loader.offsetParent !== null
+    && loader.getBoundingClientRect().height >= 1);
+  return {
+    header: hEl?.textContent?.trim() || null,
+    msgs,
+    scroll: scroller
+      ? { scrollTop: scroller.scrollTop, scrollHeight: scroller.scrollHeight, clientHeight: scroller.clientHeight }
+      : null,
+    hasContainer: !!container,
+    hasScroller: !!scroller,
+    surface: isChannel ? 'channel' : 'chat',
+    loading,
+    diag: { ...diag, messageElsCount: messageEls.length, msgsKept: msgs.length },
+  };
+}
+
+export function scrollPaneUpBy(delta) {
+  const CHAT_CONTAINER_SELECTORS = [
+    '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
+    '[data-tid="threadBodyList"]',
+    '.ts-message-list-container', '[data-tid="chat-pane"]',
+    '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]', '.message-list',
+    '[class*="message-list"]', '[class*="MessageList"]',
+    '[data-tid="messageListContainer"]', '[role="log"]',
+  ];
+  const getChatContainer = () => {
+    for (const sel of CHAT_CONTAINER_SELECTORS) {
+      try {
+        for (const el of document.querySelectorAll(sel)) {
+          if ((el.textContent || '').trim().length > 80 && el.children.length > 0) return el;
+        }
+      } catch {}
+    }
+    return null;
+  };
+  const getScroller = () => {
+    const isScrollable = (node) => {
+      if (!node || node === document.body) return false;
+      const cs = window.getComputedStyle(node);
+      return (cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+        && node.scrollHeight > node.clientHeight + 10;
+    };
+    const chat = getChatContainer();
+    if (chat) {
+      if (isScrollable(chat)) return chat;
+      let p = chat.parentElement;
+      while (p && p !== document.documentElement) {
+        if (isScrollable(p)) return p;
+        p = p.parentElement;
+      }
+    }
+    // Anchor off a known post element for channels.
+    for (const anchor of document.querySelectorAll('[id^="post-message-renderer-"], [id^="message-body-"], [data-tid="message-pane-item"]')) {
+      let p = anchor.parentElement;
+      while (p && p !== document.documentElement) {
+        if (isScrollable(p)) return p;
+        p = p.parentElement;
+      }
+    }
+    // Last resort: biggest scrollable inside [role="main"].
+    const main = document.querySelector('[role="main"]');
+    if (main && isScrollable(main)) return main;
+    if (main) {
+      let best = null;
+      for (const node of main.querySelectorAll('*')) {
+        if (isScrollable(node) && (!best || node.scrollHeight > best.scrollHeight)) best = node;
+      }
+      if (best) return best;
+    }
+    return chat;
+  };
+  const el = getScroller();
+  if (!el) return { ok: false };
+  const before = el.scrollTop;
+  // Cap the step at ~60% of clientHeight. Teams' channel virtualization
+  // responds better to organic-sized scrolls than big jumps — large deltas
+  // often skip past the zone where the virtual-list asks for more posts.
+  const maxStep = Math.max(200, Math.floor(el.clientHeight * 0.6));
+  const step = Math.min(Number(delta || 800), maxStep);
+  el.scrollTop = Math.max(0, el.scrollTop - step);
+  // Synthesize scroll + wheel events — Teams v2 channel runways listen for
+  // these to trigger virtualization loading. Pure scrollTop writes sometimes
+  // leave the loader idle.
+  try { el.dispatchEvent(new Event('scroll', { bubbles: true })); } catch {}
+  try { el.dispatchEvent(new WheelEvent('wheel', { deltaY: -step, deltaMode: 0, bubbles: true, cancelable: true })); } catch {}
+  return { ok: true, before, after: el.scrollTop, atTop: el.scrollTop <= 1, scrollHeight: el.scrollHeight };
+}
+
+export function scrollPaneToTop() {
+  const sels = [
+    '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
+    '[data-tid="chat-pane"]', '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]',
+    '[data-tid="messageListContainer"]', '[role="log"]',
+  ];
+  let el = null;
+  for (const sel of sels) {
+    const found = document.querySelector(sel);
+    if (found && found.scrollHeight > found.clientHeight + 10) { el = found; break; }
+  }
+  if (!el) return { ok: false };
+  el.scrollTop = 0;
+  return { ok: true };
+}
+
+// Scroll the message pane all the way to the bottom. Teams opens chats/channels
+// at the last-read position, so unread messages below it are missed unless we
+// jump to the newest first and then harvest backwards.
+export function scrollPaneToBottom() {
+  const ANCHOR_SELS = [
+    '[data-tid="channel-pane-viewport"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="chat-message-list"]',
+    '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list"]', '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
+    '[data-tid="chat-pane"]', '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]',
+    '[data-tid="messageListContainer"]', '[role="log"]',
+    // Posts anchor — walk up from a known post element to find scroller.
+    '[id^="post-message-renderer-"]', '[id^="message-body-"]',
+    '[data-tid="chat-pane-item"]', '[data-tid="message-pane-item"]',
+  ];
+  const isScrollable = (el) => {
+    if (!el || el === document.body) return false;
+    const cs = window.getComputedStyle(el);
+    return (cs.overflowY === 'auto' || cs.overflowY === 'scroll')
+      && el.scrollHeight > el.clientHeight + 10;
+  };
+  // 1) Try direct selection.
+  let el = null;
+  for (const sel of ANCHOR_SELS) {
+    try {
+      const found = document.querySelector(sel);
+      if (!found) continue;
+      if (isScrollable(found)) { el = found; break; }
+      // Walk up to find scrollable ancestor.
+      let p = found.parentElement;
+      while (p && p !== document.documentElement) {
+        if (isScrollable(p)) { el = p; break; }
+        p = p.parentElement;
+      }
+      if (el) break;
+    } catch {}
+  }
+  // 2) Last resort: biggest scrollable element inside [role="main"].
+  if (!el) {
+    const main = document.querySelector('[role="main"]');
+    if (main && isScrollable(main)) { el = main; }
+    if (!el && main) {
+      let best = null;
+      for (const node of main.querySelectorAll('*')) {
+        if (isScrollable(node)) {
+          if (!best || node.scrollHeight > best.scrollHeight) best = node;
+        }
+      }
+      el = best;
+    }
+  }
+  if (!el) return { ok: false, reason: 'no-scroller' };
+  const before = el.scrollTop;
+  el.scrollTop = el.scrollHeight;
+  return {
+    ok: true, before, after: el.scrollTop,
+    atBottom: el.scrollTop + el.clientHeight >= el.scrollHeight - 2,
+    scrollHeight: el.scrollHeight,
+  };
+}
+
+export function inspectPane() {
+  const CHAT_CONTAINER_SELECTORS = [
+    '.fui-Chat', '[class*="fui-Chat"]', '[data-tid="message-pane-list-surface"]',
+    '[data-tid="message-pane-list-viewport"]', '[data-tid="message-pane-list"]',
+    '[data-tid="chat-message-list"]',
+    '[data-tid="channel-pane-viewport"]',
+    '[data-tid="channel-content"]',
+    '[data-tid="channel-pane-runway"]', '[id="channel-pane"]',
+    '[data-tid="threadBodyList"]',
+    '.ts-message-list-container', '[data-tid="chat-pane"]',
+    '[data-shortcut-context="chat-messages-list"]',
+    '[role="main"] [data-is-scrollable="true"]', '.message-list',
+    '[class*="message-list"]', '[class*="MessageList"]',
+    '[data-tid="messageListContainer"]', '[role="log"]',
+  ];
+  const MESSAGE_SELECTORS = [
+    '[data-tid="chat-pane-item"]', '[data-tid="message-pane-item"]',
+    '[id^="post-message-renderer-"]', '[id^="reply-message-renderer-"]',
+    '[id^="message-body-"]',
+    '[data-testid="message-wrapper"]',
+    '[data-tid="chat-pane-message"]', '[class*="fui-unstable-ChatItem"]',
+    '[data-tid="messageWrapper"]', '.message-body-container',
+    '[class*="message-item"]', '[role="listitem"]',
+  ];
+  let chat = null;
+  for (const sel of CHAT_CONTAINER_SELECTORS) {
+    try {
+      for (const el of document.querySelectorAll(sel)) {
+        if ((el.textContent || '').trim().length > 80 && el.children.length > 0) { chat = el; break; }
+      }
+      if (chat) break;
+    } catch {}
+  }
+  const out = {
+    url: location.href, title: document.title,
+    containerFound: !!chat,
+    containerTag: chat?.tagName || null,
+    containerClass: chat?.className?.toString().slice(0, 120) || null,
+    selectorCounts: {},
+  };
+  for (const sel of MESSAGE_SELECTORS) {
+    try { out.selectorCounts[sel] = document.querySelectorAll(sel).length; } catch {}
+  }
+  return out;
+}
+
+// Channels lazy-render replies: each post shows up to ~3 recent replies behind
+// an "Open N replies from ..." button. This expands all such buttons in the
+// visible DOM so collectPaneMessages can see the reply bodies. Also expands
+// "See more" truncation buttons inside long message bodies.
+export function expandChannelReplies() {
+  let clicked = 0;
+  // NOTE: Do NOT click [data-tid="response-summary-button"] ("Open N replies"
+  // from ...). That button navigates to the L2 replies pane (#channel-pane-l2)
+  // and replaces the main channel view, which kills harvest for the rest of
+  // the channel. Inline replies (the last few under each post) are already
+  // visible in the runway and captured by collectPaneMessages via
+  // [data-tid="response-surface"] [data-testid="message-body-flex-wrapper"].
+  // Full replies-pane scraping should happen as a separate step that also
+  // closes the L2 pane via [data-tid="close-l2-view-button"].
+
+  // See-more expanders: aria-controls targets the see-more-content-* div, and
+  // the button carries data-track-module-name="seeMoreButton". Using either is
+  // better than matching the literal "See more" text.
+  for (const el of document.querySelectorAll('button[aria-controls^="see-more-content-"], [data-track-module-name="seeMoreButton"], [data-testid^="see-more-content-"] button, [data-testid^="see-more-content-"]')) {
+    if (el.getAttribute('aria-disabled') === 'true' || el.disabled) continue;
+    if (el.getAttribute('aria-expanded') === 'true') continue;
+    try { el.click(); clicked++; } catch {}
+  }
+  // Text-pattern fallback for "See more" only (NOT "Open N replies").
+  const patterns = [
+    /^\s*see\s+more\b/i,
+  ];
+  const nodes = document.querySelectorAll('button, [role="button"]');
+  for (const btn of nodes) {
+    if (btn.getAttribute('aria-disabled') === 'true' || btn.disabled) continue;
+    const label = (btn.getAttribute('aria-label') || btn.textContent || '').trim();
+    if (!label) continue;
+    if (patterns.some((re) => re.test(label))) {
+      try { btn.click(); clicked++; } catch {}
+    }
+  }
+  return { clicked };
+}
+
+// Navigate via the left sidebar tree (Chat list / Teams list) instead of search.
+// Accepts either a bare name string, or an object: { name?, team?, channel? }.
+// When { team, channel } is provided, finds the team treeitem first, expands
+// it if collapsed, then scopes the channel search to that team's subtree.
+// Returns a diagnostics object describing what was found/clicked.
+export function clickSidebarTarget(target) {
+  const spec = (typeof target === 'string') ? { name: target } : (target || {});
+  const needleName = String(spec.name || '').trim().toLowerCase();
+  const needleTeam = String(spec.team || '').trim().toLowerCase();
+  const needleChannel = String(spec.channel || '').trim().toLowerCase();
+
+  const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  // Very light similarity: ratio of matching chars by sliding window; cheap,
+  // tolerates 1-2 character typos (e.g. "Shapshifters" vs "ShapeShifters").
+  const similarity = (a, b) => {
+    if (!a || !b) return 0;
+    const shorter = a.length < b.length ? a : b;
+    const longer = a.length < b.length ? b : a;
+    if (longer.length === 0) return 1;
+    let matches = 0;
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer.includes(shorter.slice(i, i + 3))) matches++;
+    }
+    return matches / shorter.length;
+  };
+  const score = (title, needle) => {
+    const t = norm(title);
+    const n = norm(needle);
+    if (!t || !n) return 0;
+    if (t === n) return 100;
+    if (t.startsWith(n)) return 80;
+    if (n.startsWith(t) && t.length >= 6) return 75; // DOM title truncated to a prefix of the needle
+    const tWords = t.split(/\s+/).filter(Boolean);
+    const nWords = n.split(/\s+/).filter(Boolean);
+    if (nWords.length > 1) {
+      // Token-prefix match: every needle word is a prefix of some title word.
+      // Handles DOM labels that truncate ("FTAuthentication Mobile Authent…").
+      const allPrefixed = nWords.every((nw) =>
+        tWords.some((tw) => tw.startsWith(nw) || nw.startsWith(tw)));
+      if (allPrefixed) return 60 + Math.min(20, nWords.length * 4);
+      // Every needle word appears (substring) in title
+      if (nWords.every((w) => t.includes(w))) return 50 + Math.min(20, nWords.length * 5);
+      // Majority of needle words match
+      const hits = nWords.filter((w) => t.includes(w)).length;
+      if (hits >= Math.ceil(nWords.length * 0.7)) return 30 + hits * 3;
+    }
+    if (t.includes(n)) return 40;
+    // fuzzy fallback: close enough for typos
+    const sim = similarity(t, n);
+    if (sim >= 0.8) return 35;
+    if (sim >= 0.65) return 25;
+    return 0;
+  };
+
+  const expandFolder = (folder) => {
+    if (!folder) return false;
+    if (folder.getAttribute('aria-expanded') === 'true') return false;
+    const header = folder.querySelector('[data-testid="conversation-folder-header"], [data-inp="simple-collab-folder-header"]') || folder;
+    try { header.click(); return true; } catch { return false; }
+  };
+
+  // 1) Expand top-level folders (Chat list, Teams & channels, Favorites, etc.)
+  let expanded = 0;
+  const topFolders = document.querySelectorAll(
+    '[data-testid="simple-collab-dnd-rail"] [data-item-type="custom-folder"][aria-expanded="false"], '
+    + '[data-testid="simple-collab-dnd-rail"] [data-item-type="teams-and-channels"][aria-expanded="false"], '
+    + '[data-testid="simple-collab-dnd-rail"] [data-item-type="chats"][aria-expanded="false"]'
+  );
+  for (const f of topFolders) if (expandFolder(f)) expanded++;
+
+  // Helper: click a treeitem (prefer its main switch/content area).
+  const clickTreeitem = (el) => {
+    const item = el.closest('[role="treeitem"]') || el;
+    const clickable = item.querySelector('[data-inp="simple-collab-chat-switch"], [data-inp="simple-collab-channel-switch"], [data-inp="simple-collab-list-item-teams-and-channels"]')
+      || item.querySelector('[data-testid="list-item"]')
+      || item.querySelector('[class*="TreeItemLayout__main"]')
+      || item;
+    try { clickable.click(); return true; } catch { return false; }
+  };
+
+  // 2) TEAM + CHANNEL path
+  if (needleTeam && needleChannel) {
+    // Find all team treeitems.
+    const teamItems = [...document.querySelectorAll('[role="treeitem"][data-item-type="team"]')];
+    let bestTeam = null;
+    let bestTeamScore = 0;
+    const teamCandidates = [];
+    for (const ti of teamItems) {
+      // Team label is in a span with id starting "title-team-list-item-"
+      const titleEl = ti.querySelector('[id^="title-team-list-item-"]')
+        || ti.querySelector('[class*="team-type-name"]')
+        || ti.querySelector('span');
+      const txt = titleEl?.textContent || '';
+      const s = score(txt, needleTeam);
+      teamCandidates.push({ text: txt.trim().slice(0, 80), score: s });
+      if (s > bestTeamScore) { bestTeamScore = s; bestTeam = ti; }
+    }
+    if (!bestTeam || bestTeamScore < 25) {
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: 'team-not-found',
+        expandedFolders: expanded,
+        teamCandidates: teamCandidates.sort((a, b) => b.score - a.score).slice(0, 8),
+      };
+    }
+    // Expand the team if collapsed.
+    const wasCollapsed = bestTeam.getAttribute('aria-expanded') === 'false';
+    if (wasCollapsed) {
+      const header = bestTeam.querySelector('[data-testid^="list-item-teams-and-channels"]') || bestTeam;
+      try { header.click(); expanded++; } catch {}
+    }
+
+    // Match channels to this team by thread ID extracted from the team's
+    // data-fui-tree-item-value (e.g. "OneGQL_Team|19:<id>@thread.tacv2").
+    // Channel items have their team's thread ID embedded in their own
+    // data-fui-tree-item-value and data-testid ("sc-channel-list-item-<id>"),
+    // which is far more reliable than walking DOM siblings.
+    const teamValue = bestTeam.getAttribute('data-fui-tree-item-value') || '';
+    const teamIdMatch = teamValue.match(/19:[0-9a-f]+@thread\.(?:tacv2|skype)/i);
+    const teamThreadId = teamIdMatch ? teamIdMatch[0] : null;
+
+    const findGroupForTeam = () => {
+      let g = null;
+      let sib = bestTeam.nextElementSibling;
+      while (sib && !g) {
+        if (sib.matches?.('[role="group"]')) g = sib;
+        sib = sib.nextElementSibling;
+      }
+      return g;
+    };
+
+    let channelItems = [];
+    if (teamThreadId) {
+      channelItems = [...document.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+        .filter((ci) => {
+          const v = ci.getAttribute('data-fui-tree-item-value') || '';
+          const t = ci.getAttribute('data-testid') || '';
+          return v.includes(teamThreadId) || t.includes(teamThreadId);
+        });
+    }
+    // Fallback: positional (legacy behavior) if thread-ID pairing found nothing.
+    let teamGroup = null;
+    if (channelItems.length === 0) {
+      // Channels may be nested inside the team treeitem OR in a sibling
+      // [role="group"]. Try descendants first (current Teams v2 layout),
+      // then fall back to sibling group (older layout).
+      channelItems = [...bestTeam.querySelectorAll('[role="treeitem"][data-item-type="channel"]')];
+      if (channelItems.length === 0) {
+        teamGroup = findGroupForTeam();
+        channelItems = teamGroup
+          ? [...teamGroup.querySelectorAll('[role="treeitem"][data-item-type="channel"]')]
+          : [];
+      }
+    }
+
+    // Click "See all channels" as a LAST RESORT when we can't find the target
+    // — it sometimes navigates away from the sidebar or opens a discovery
+    // dialog, so we only want to fire it on a genuine miss.
+    const clickSeeAll = () => {
+      const group = teamGroup || findGroupForTeam();
+      const btn = group?.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]')
+        || bestTeam.querySelector('[data-testid$="-see-all-channel"], [data-testid*="seeall"], [data-testid*="see-all"]');
+      if (btn) {
+        try { btn.click(); return true; } catch {}
+      }
+      return false;
+    };
+
+    const teamTitleText = (
+      bestTeam.querySelector('[id^="title-team-list-item-"]')?.textContent
+      || bestTeam.querySelector('[class*="team-type-name"]')?.textContent
+      || ''
+    ).trim().slice(0, 80);
+
+    // If we just expanded the team, give the DOM a tick to render the
+    // channels, then retry. Don't touch See-all yet.
+    if (wasCollapsed && channelItems.length === 0) {
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: 'team-just-expanded',
+        needsRetry: true,
+        teamMatch: teamTitleText,
+        teamScore: bestTeamScore,
+        channelItemsFound: 0,
+        expandedFolders: expanded,
+      };
+    }
+
+    // Filter out non-channel treeitems (e.g. "See all channels", "Channels"
+    // nav nodes) that may carry data-item-type="channel" but aren't actual
+    // channels we want to navigate to.
+    const realChannelItems = channelItems.filter((ci) => {
+      const testid = ci.getAttribute('data-testid') || '';
+      if (/see-all-channel|seeall|see-all/i.test(testid)) return false;
+      // Real channels have a title element with id starting "title-channel-list-item-".
+      if (!ci.querySelector('[id^="title-channel-list-item-"]')) return false;
+      return true;
+    });
+
+    if (realChannelItems.length === 0) {
+      // None rendered at all — try See-all once to unhide them.
+      const clickedSeeAll = clickSeeAll();
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: clickedSeeAll ? 'see-all-clicked-no-channels' : 'no-channels-rendered',
+        needsRetry: clickedSeeAll,
+        teamMatch: teamTitleText,
+        teamScore: bestTeamScore,
+        channelItemsFound: channelItems.length,
+        expandedFolders: expanded,
+      };
+    }
+
+    let bestCh = null;
+    let bestChScore = 0;
+    const chCandidates = [];
+    for (const ci of realChannelItems) {
+      const titleEl = ci.querySelector('[id^="title-channel-list-item-"]')
+        || ci.querySelector('[class*="channel-type-name"]')
+        || ci.querySelector('span');
+      const txt = titleEl?.textContent || '';
+      const s = score(txt, needleChannel);
+      chCandidates.push({ text: txt.trim().slice(0, 80), score: s });
+      if (s > bestChScore) { bestChScore = s; bestCh = ci; }
+    }
+    if (!bestCh || bestChScore < 25) {
+      // Maybe hidden behind "See all channels" — click it once as recovery,
+      // then let the caller retry.
+      const clickedSeeAll = clickSeeAll();
+      if (clickedSeeAll) {
+        return {
+          found: false, clicked: false, mode: 'team-channel',
+          reason: 'see-all-clicked-on-miss',
+          needsRetry: true,
+          teamMatch: teamTitleText,
+          expandedFolders: expanded,
+          channelCandidates: chCandidates.sort((a, b) => b.score - a.score).slice(0, 10),
+        };
+      }
+      return {
+        found: false, clicked: false, mode: 'team-channel',
+        reason: 'channel-not-found-in-team',
+        teamMatch: teamTitleText,
+        expandedFolders: expanded,
+        channelCandidates: chCandidates.sort((a, b) => b.score - a.score).slice(0, 10),
+      };
+    }
+    const ok = clickTreeitem(bestCh);
+    return {
+      found: true, clicked: ok, mode: 'team-channel',
+      teamMatch: (bestTeam.querySelector('[id^="title-team-list-item-"]')?.textContent || '').trim(),
+      channelMatch: (bestCh.querySelector('[id^="title-channel-list-item-"]')?.textContent || '').trim(),
+      teamScore: bestTeamScore, channelScore: bestChScore,
+      expandedFolders: expanded,
+    };
+  }
+
+  // 3) NAME-only path — search across all visible titles (chats + teams + channels).
+  const needle = needleName;
+  if (!needle) return { found: false, clicked: false, reason: 'empty-name' };
+
+  const titleEls = document.querySelectorAll(
+    '[data-testid="simple-collab-dnd-rail"] [id^="title-chat-list-item_"], '
+    + '[data-testid="simple-collab-dnd-rail"] [id^="title-channel-list-item-"], '
+    + '[data-testid="simple-collab-dnd-rail"] [id^="title-team-list-item-"], '
+    + '[data-testid="simple-collab-dnd-rail"] [role="treeitem"] span[id^="title-"]'
+  );
+  const candidates = [];
+  let best = null;
+  let bestScore = 0;
+  for (const el of titleEls) {
+    const txt = el.textContent || '';
+    const s = score(txt, needle);
+    // Prefer chats and channels over teams for name-only queries.
+    const ti = el.closest('[role="treeitem"]');
+    const kind = ti?.getAttribute('data-item-type') || '';
+    const weighted = s + (kind === 'chat' ? 3 : kind === 'channel' ? 1 : 0);
+    candidates.push({ text: txt.trim().slice(0, 80), score: s, kind });
+    if (weighted > bestScore) { bestScore = weighted; best = el; }
+  }
+  if (!best || bestScore < 25) {
+    return {
+      found: false, clicked: false, mode: 'name',
+      expandedFolders: expanded,
+      candidateCount: candidates.length,
+      topCandidates: candidates.sort((a, b) => b.score - a.score).slice(0, 8),
+    };
+  }
+  const ok = clickTreeitem(best);
+  return {
+    found: true, clicked: ok, mode: 'name',
+    matchText: best.textContent?.trim() || '',
+    score: bestScore,
+    expandedFolders: expanded,
+  };
+}
+
+// Ensure the Chat tab is active so the left rail is rendered. Presses Escape
+// first to dismiss any open search overlay, then clicks the Chat app-bar item
+// if the rail is currently missing.
+export function ensureChatTabActive() {
+  // Dismiss any modal/overlay the app may have opened.
+  try {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  } catch {}
+  const railPresent = !!document.querySelector('[data-testid="simple-collab-dnd-rail"]');
+  if (railPresent) return { clicked: false, railPresent: true };
+  const selectors = [
+    'button[aria-label="Chat" i]',
+    '[data-tid="app-bar-chat"]',
+    '[data-tid="app-bar-2"]',
+    '[data-tid="app-bar-2a84919f-59d8-4441-a975-2a8c2643b741"]', // internal Chat app id
+    'a[href*="/chat"]',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      try { el.click(); return { clicked: true, via: sel, railPresent: false }; } catch {}
+    }
+  }
+  return { clicked: false, railPresent: false, reason: 'chat-tab-not-found' };
+}
+
+// Scroll the sidebar chat/teams tree to load more virtualized items. Returns
+// whether the scroll moved. Useful when a target isn't in the initial view.
+export function scrollSidebarTree(delta) {
+  const rail = document.querySelector('[data-testid="simple-collab-dnd-rail"]');
+  if (!rail) return { ok: false, reason: 'no-rail' };
+  // Walk up/down to find the scrollable ancestor or descendant.
+  let el = rail;
+  const find = (node) => {
+    if (!node) return null;
+    if (node.scrollHeight > node.clientHeight + 10) {
+      const cs = getComputedStyle(node);
+      if (cs.overflowY === 'auto' || cs.overflowY === 'scroll') return node;
+    }
+    return null;
+  };
+  let scroller = find(rail);
+  if (!scroller) {
+    let p = rail.parentElement;
+    while (p && !scroller) { scroller = find(p); p = p.parentElement; }
+  }
+  if (!scroller) {
+    for (const n of rail.querySelectorAll('*')) {
+      scroller = find(n);
+      if (scroller) break;
+    }
+  }
+  if (!scroller) return { ok: false, reason: 'no-scroller' };
+  const before = scroller.scrollTop;
+  scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Number(delta || 600));
+  return {
+    ok: true, before, after: scroller.scrollTop,
+    atBottom: scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2,
+    scrollHeight: scroller.scrollHeight,
+  };
+}
+
+

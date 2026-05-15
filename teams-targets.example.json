@@ -1,0 +1,7 @@
+{
+  "targets": [
+    "Team Standup",
+    { "name": "Nick Baudin", "label": "Nick (1:1)" },
+    { "name": "iOS Dev", "label": "iOS Dev (group chat)" }
+  ]
+}
